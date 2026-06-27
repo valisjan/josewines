@@ -20,6 +20,7 @@
     .warn { background: #3d2000; border: 1px solid #c99c0e; border-radius: 12px; padding: 12px 16px; font-size: 13px; color: #e8b610; line-height: 1.5; }
     .error { background: #3d0000; border: 1px solid #8f1919; border-radius: 12px; padding: 16px; color: #f4a8a8; font-size: 14px; }
     a.back { color: #df4444; font-size: 13px; display: inline-block; margin-top: 20px; text-decoration: underline; }
+    code { background: #1a0505; border: 1px solid #8f1919; border-radius: 6px; padding: 2px 6px; font-size: 12px; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -35,6 +36,9 @@
           <div class="step-desc">Mantenlo pulsado y suéltalo en la barra de marcadores del navegador.</div>
           <br>
           <a id="bm-link" draggable="true" class="bookmarklet-link">📦 Importar Bodeboca</a>
+          <p style="font-size:11px;color:#771b1b;margin-top:8px;margin-bottom:0">
+            En móvil: pulsa los tres puntos → Añadir a marcadores → edita la URL con el enlace que ves abajo.
+          </p>
         </div>
       </div>
 
@@ -80,11 +84,8 @@
   </div>
 
   <script>
-    const API_URL = 'https://josewines.netlify.app/.netlify/functions/import-bodeboca';
-    const BASE_URL = 'https://www.bodeboca.com/mi-bodega?sort=created-desc&page=';
-
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
+    var params = new URLSearchParams(window.location.search);
+    var token = params.get('token');
 
     if (!token) {
       document.getElementById('subtitle').textContent = 'Falta el token de importación.';
@@ -94,65 +95,19 @@
       document.getElementById('subtitle').textContent = 'Sigue estos pasos para importar tus vinos de Bodeboca.';
       document.getElementById('content').style.display = 'block';
 
-      const script = buildScript(token);
-      document.getElementById('bm-link').href = 'javascript:' + encodeURIComponent(script);
-    }
+      // Tiny bookmarklet: sets token global and loads the real script from our server.
+      // Short URL avoids regex corruption caused by encodeURIComponent on long scripts.
+      var bm = '(function(){'
+        + 'window.__JW_TOKEN=' + JSON.stringify(token) + ';'
+        + 'var s=document.createElement("script");'
+        + 's.src="https://josewines.netlify.app/import.js?v=' + Date.now() + '";'
+        + 's.onerror=function(){'
+          + 'alert("No se pudo cargar el importador.\\nPuede que esta p\\u00e1gina bloquee scripts externos (CSP).\\nInt\\u00e9ntalo en Chrome o Edge.");'
+        + '};'
+        + 'document.head.appendChild(s);'
+        + '})();';
 
-    function buildScript(token) {
-      return `(function(){
-  var TOKEN='${token}';
-  var API='${API_URL}';
-  var BASE='${BASE_URL}';
-  var wines=[];
-  var seenIds=new Set();
-  function show(msg,done){
-    var el=document.getElementById('__jw');
-    if(!el){el=document.createElement('div');el.id='__jw';el.style.cssText='position:fixed;top:16px;right:16px;z-index:2147483647;background:#1a0505;color:#f4a8a8;border:2px solid #8f1919;border-radius:14px;padding:14px 18px;font-family:sans-serif;font-size:13px;max-width:300px;box-shadow:0 4px 24px rgba(0,0,0,.8);line-height:1.6;';document.body.appendChild(el);}
-    el.innerHTML='<b style="color:white;font-size:14px">🍷 Mi Bodega</b><br>'+msg+(done?'':'<br><small style="color:#771b1b">No cierres esta pestaña...</small>');
-  }
-  function getItems(html){
-    var re=/<script[^>]*>([\s\S]*?)<\/script>/gi,m,dl;
-    while((m=re.exec(html))!==null){
-      if(m[1].indexOf('dataLayer')<0||m[1].indexOf('ecommerce')<0)continue;
-      var dm=m[1].match(/dataLayer\s*=\s*(\[[\s\S]*?\])\s*;/);
-      if(!dm)continue;
-      try{dl=JSON.parse(dm[1]);var ev=dl.find(function(e){return e.ecommerce&&e.ecommerce.items;});if(ev)return ev.ecommerce.items;}catch(e){}
-    }
-    return[];
-  }
-  function pages(html){
-    var nums=[],re=/[?&]page=(\d+)/g,m;
-    while((m=re.exec(html))!==null)nums.push(parseInt(m[1]));
-    return nums.length?Math.max.apply(null,nums):27;
-  }
-  function map(it){
-    var id=String(it.item_id||it.id||Math.random());
-    if(seenIds.has(id))return null;
-    seenIds.add(id);
-    return{name:(it.item_name||'').substring(0,200),winery:(it.item_category||it.item_brand||'').substring(0,100),vintage_year:it.item_category5?parseInt(it.item_category5):null,purchase_date:new Date().toISOString().split('T')[0],price_per_bottle:parseFloat(it.price)||0,units_purchased:parseInt(it.quantity)||1,region:it.item_category4||null,source_order_id:id,label_image_url:null};
-  }
-  async function run(){
-    show('Cargando página 1...');
-    var r=await fetch(BASE+'1',{credentials:'include'});
-    var h=await r.text();
-    var total=pages(h);
-    getItems(h).forEach(function(it){var w=map(it);if(w)wines.push(w);});
-    show('Página 1/'+total+' — '+wines.length+' vinos...');
-    for(var p=2;p<=total;p++){
-      show('Página '+p+'/'+total+' — '+wines.length+' vinos...');
-      r=await fetch(BASE+p,{credentials:'include'});
-      h=await r.text();
-      getItems(h).forEach(function(it){var w=map(it);if(w)wines.push(w);});
-      await new Promise(function(res){setTimeout(res,250);});
-    }
-    show('Enviando '+wines.length+' vinos...');
-    var res=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,wines:wines})});
-    var data=await res.json();
-    if(res.ok){show('✅ '+data.imported+' vinos importados'+(data.skipped>0?', '+data.skipped+' ya existían':'')+'. <a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>',true);}
-    else{show('❌ '+(data.error||'Error'),true);}
-  }
-  run().catch(function(e){show('❌ '+e.message,true);});
-})()`;
+      document.getElementById('bm-link').href = 'javascript:' + encodeURIComponent(bm);
     }
   </script>
 </body>
