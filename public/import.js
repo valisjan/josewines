@@ -98,14 +98,12 @@
         var namePos = strippedLower.indexOf(prefix);
         if (namePos < 0) continue;
 
-        if (idx === 0) {
-          log('Nombre "' + prefix + '" en pos ' + namePos + '. HTML alrededor:',
-            html.slice(Math.max(0, namePos - 300), namePos + 600));
-        }
 
-        // Nearest <img> BEFORE the name (within 4000 chars)
+        // Nearest <img> BEFORE the name (within 4000 chars).
+        // Extend 400 chars past namePos so an <img> whose alt= contains the
+        // wine name (and whose closing /> falls after namePos) is still captured.
         var windowStart = Math.max(0, namePos - 4000);
-        var chunk = html.slice(windowStart, namePos); // use original for img parsing
+        var chunk = html.slice(windowStart, namePos + 400);
         var best = null;
         var pos = 0;
         while (pos < chunk.length) {
