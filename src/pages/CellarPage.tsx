@@ -4,11 +4,12 @@ import { Search, Plus, SlidersHorizontal } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { Wine } from '../types/wine'
-import { getScoreLabel } from '../types/wine'
 import WineCard from '../components/WineCard'
 import AddWineModal from '../components/AddWineModal'
+import clsx from 'clsx'
 
 type SortKey = 'name' | 'purchase_date' | 'vintage_year' | 'personal_score' | 'price_per_bottle'
+type PresenceFilter = 'all' | 'present' | 'absent'
 
 export default function CellarPage() {
   const { user } = useAuth()
@@ -16,6 +17,7 @@ export default function CellarPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('purchase_date')
+  const [presence, setPresence] = useState<PresenceFilter>('present')
   const [showAddModal, setShowAddModal] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
 
@@ -44,14 +46,24 @@ export default function CellarPage() {
     fetchPendingCount()
   }, [user, sortBy])
 
-  const filtered = wines.filter(w =>
-    w.name.toLowerCase().includes(search.toLowerCase()) ||
-    w.winery.toLowerCase().includes(search.toLowerCase()) ||
-    (w.region ?? '').toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = wines.filter(w => {
+    const matchesSearch =
+      w.name.toLowerCase().includes(search.toLowerCase()) ||
+      w.winery.toLowerCase().includes(search.toLowerCase()) ||
+      (w.region ?? '').toLowerCase().includes(search.toLowerCase())
 
-  const totalBottles = wines.reduce((sum, w) => sum + w.units_remaining, 0)
-  const totalValue = wines.reduce((sum, w) => sum + w.units_remaining * w.price_per_bottle, 0)
+    const matchesPresence =
+      presence === 'all' ||
+      (presence === 'present' && w.units_remaining > 0) ||
+      (presence === 'absent' && w.units_remaining === 0)
+
+    return matchesSearch && matchesPresence
+  })
+
+  const totalBottles = wines.filter(w => w.units_remaining > 0).reduce((sum, w) => sum + w.units_remaining, 0)
+  const totalValue = wines.filter(w => w.units_remaining > 0).reduce((sum, w) => sum + w.units_remaining * w.price_per_bottle, 0)
+  const presentCount = wines.filter(w => w.units_remaining > 0).length
+  const absentCount = wines.filter(w => w.units_remaining === 0).length
 
   return (
     <div className="px-4 py-6 max-w-2xl mx-auto md:max-w-4xl">
@@ -86,6 +98,28 @@ export default function CellarPage() {
           <span className="ml-auto">→</span>
         </Link>
       )}
+
+      {/* Presence filter tabs */}
+      <div className="flex gap-1 mb-4 p-1 bg-wine-900/40 rounded-xl border border-wine-800/40">
+        {([
+          { key: 'present', label: `En bodega (${presentCount})` },
+          { key: 'absent',  label: `Agotados (${absentCount})` },
+          { key: 'all',     label: 'Todos' },
+        ] as { key: PresenceFilter; label: string }[]).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setPresence(key)}
+            className={clsx(
+              'flex-1 py-2 px-3 rounded-lg text-xs font-semibold transition-colors',
+              presence === key
+                ? 'bg-wine-700 text-white'
+                : 'text-wine-500 hover:text-wine-300'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* Search + Sort */}
       <div className="flex gap-2 mb-5">
@@ -124,7 +158,11 @@ export default function CellarPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-wine-500">
-          {search ? 'Sin resultados para esa búsqueda.' : 'Tu bodega está vacía. ¡Añade tu primer vino!'}
+          {search
+            ? 'Sin resultados para esa búsqueda.'
+            : presence === 'absent'
+            ? 'No tienes vinos agotados.'
+            : 'Tu bodega está vacía. ¡Añade tu primer vino!'}
         </div>
       ) : (
         <div className="space-y-3">
@@ -143,6 +181,3 @@ export default function CellarPage() {
     </div>
   )
 }
-
-// Needed for inline score display
-export { getScoreLabel }

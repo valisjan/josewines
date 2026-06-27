@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import ScoreInput from './ScoreInput'
+import PhotoUpload from './PhotoUpload'
 
 interface Props {
   onClose: () => void
@@ -25,6 +26,7 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
     notes: '',
     optimal_drink_from: '',
     optimal_drink_until: '',
+    label_image_url: null as string | null,
   })
 
   const set = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
@@ -50,6 +52,7 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
       notes: form.notes.trim() || null,
       optimal_drink_from: form.optimal_drink_from ? parseInt(form.optimal_drink_from) : null,
       optimal_drink_until: form.optimal_drink_until ? parseInt(form.optimal_drink_until) : null,
+      label_image_url: form.label_image_url,
     })
 
     setSaving(false)
@@ -176,6 +179,13 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
                 className={inputCls}
               />
             </div>
+          </Field>
+
+          <Field label="Foto de la etiqueta">
+            <PhotoUpload
+              currentUrl={form.label_image_url}
+              onUploaded={url => setForm(p => ({ ...p, label_image_url: url }))}
+            />
           </Field>
 
           <Field label="Tu puntuación">
