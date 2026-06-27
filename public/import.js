@@ -3,8 +3,9 @@
   var TOKEN = window.__JW_TOKEN;
   var API = 'https://josewines.netlify.app/.netlify/functions/import-bodeboca';
   var BASE = 'https://www.bodeboca.com/mi-bodega?sort=created-desc&page=';
-  var wines = [];
   var seenIds = {};
+  var totalImported = 0;
+  var totalSkipped = 0;
   var MAX_PAGES = 60;
 
   function show(msg, done) {
@@ -26,52 +27,47 @@
     return new Promise(function (r) { setTimeout(r, ms); });
   }
 
-  // Extract wine items from page HTML.
-  // Looks for inline <script> blocks containing dataLayer = [{ecommerce:{items:[...]}}]
+  // Extract wine items from a page's HTML.
+  // Handles both: dataLayer = [{ecommerce:{items:[]}}]
+  //           and: dataLayer.push({ecommerce:{items:[]}})
   function getItems(html) {
+    var results = [];
     var pos = 0;
+
     while (pos < html.length) {
-      // Find next <script ...> opening tag
+      // Find next inline <script> block (skip ones with src=)
       var tagOpen = html.indexOf('<script', pos);
       if (tagOpen < 0) break;
       var tagClose = html.indexOf('>', tagOpen);
       if (tagClose < 0) break;
-
-      // Skip external scripts (have src=)
       var tagText = html.slice(tagOpen, tagClose + 1);
       if (tagText.indexOf('src=') >= 0) { pos = tagClose + 1; continue; }
 
       var contentStart = tagClose + 1;
       var contentEnd = html.indexOf('</script>', contentStart);
       if (contentEnd < 0) break;
-
       var src = html.slice(contentStart, contentEnd);
       pos = contentEnd + 9;
 
-      // Quick filter: must contain both 'ecommerce' and 'items'
-      if (src.indexOf('"ecommerce"') < 0 || src.indexOf('"items"') < 0) continue;
+      if (src.indexOf('ecommerce') < 0) continue;
 
-      // Find the dataLayer = [...] assignment specifically.
-      // Avoids matching dataLayer || [] or window.dataLayer checks.
+      // --- Pattern 1: dataLayer = [{...}] ---
       var searchFrom = 0;
       while (searchFrom < src.length) {
         var dlPos = src.indexOf('dataLayer', searchFrom);
         if (dlPos < 0) break;
-
-        // Skip past 'dataLayer'
         var i = dlPos + 9;
-        // Skip whitespace
+        // skip whitespace
         while (i < src.length && src[i] <= ' ') i++;
-        // Must be '=' but not '==' or '=>'
+        // must be = but not == or =>
         if (src[i] !== '=') { searchFrom = dlPos + 1; continue; }
         i++;
         if (src[i] === '=' || src[i] === '>') { searchFrom = dlPos + 1; continue; }
-        // Skip whitespace after '='
+        // skip whitespace after =
         while (i < src.length && src[i] <= ' ') i++;
-        // Must start with '['
+        // must start with [
         if (src[i] !== '[') { searchFrom = dlPos + 1; continue; }
 
-        // Found 'dataLayer = [' — count brackets to find end
         var arrStart = i;
         var depth = 0, arrEnd = -1;
         for (var j = arrStart; j < src.length; j++) {
@@ -86,16 +82,43 @@
             for (var k = 0; k < dl.length; k++) {
               var ev = dl[k];
               if (ev && ev.ecommerce && Array.isArray(ev.ecommerce.items) && ev.ecommerce.items.length > 0) {
-                return ev.ecommerce.items;
+                results = results.concat(ev.ecommerce.items);
               }
             }
           }
-        } catch (e) { /* malformed JSON, try next */ }
+        } catch (e) {}
 
         searchFrom = dlPos + 1;
       }
+
+      // --- Pattern 2: dataLayer.push({ecommerce:{items:[...]}}) ---
+      searchFrom = 0;
+      while (searchFrom < src.length) {
+        var pushPos = src.indexOf('dataLayer.push(', searchFrom);
+        if (pushPos < 0) break;
+        var objStart = src.indexOf('{', pushPos + 15);
+        if (objStart < 0) break;
+
+        var depth2 = 0, objEnd = -1;
+        for (var m = objStart; m < src.length; m++) {
+          if (src[m] === '{') depth2++;
+          else if (src[m] === '}') { depth2--; if (depth2 === 0) { objEnd = m; break; } }
+        }
+        if (objEnd < 0) break;
+
+        try {
+          var pushed = JSON.parse(src.slice(objStart, objEnd + 1));
+          if (pushed && pushed.ecommerce && Array.isArray(pushed.ecommerce.items) && pushed.ecommerce.items.length > 0) {
+            results = results.concat(pushed.ecommerce.items);
+          }
+        } catch (e) {}
+
+        searchFrom = pushPos + 1;
+      }
+
+      if (results.length > 0) return results; // found what we need in this script block
     }
-    return [];
+    return results;
   }
 
   function mapItem(it) {
@@ -126,8 +149,9 @@
       });
   }
 
-  function send() {
-    show('Enviando ' + wines.length + ' vinos…');
+  // Send a batch of wines to the API
+  function sendBatch(wines, page) {
+    if (!wines.length) return Promise.resolve();
     return fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -136,37 +160,37 @@
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (res) {
         if (res.ok) {
-          show('&#x2705; ' + res.d.imported + ' vinos importados'
-            + (res.d.skipped > 0 ? ', ' + res.d.skipped + ' ya existían' : '')
-            + '. <a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
+          totalImported += res.d.imported || 0;
+          totalSkipped += res.d.skipped || 0;
         } else {
-          show('&#x274C; ' + (res.d.error || 'Error desconocido'), true);
+          throw new Error(res.d.error || 'Error al enviar página ' + page);
         }
       });
   }
 
-  // Fetch pages adaptively: keep going until two consecutive pages return no items.
-  // This avoids having to detect the total page count from the HTML.
   function fetchNext(page, emptyStreak) {
     if (page > MAX_PAGES) return Promise.resolve();
-    show('Cargando página ' + page + '… (' + wines.length + ' vinos)');
-    return delay(300)
+    show('Cargando página ' + page + '… (' + totalImported + ' guardados)');
+    return delay(400)
       .then(function () { return fetchPage(page); })
       .then(function (h) {
         var items = getItems(h);
         if (items.length === 0) {
-          // Page returned no items — could be past the end or a transient issue
-          if (emptyStreak >= 1) return; // two in a row = definitely done
+          if (emptyStreak >= 1) return; // two empty in a row = done
           return fetchNext(page + 1, emptyStreak + 1);
         }
+        var wines = [];
         items.forEach(function (it) { var w = mapItem(it); if (w) wines.push(w); });
-        show('Página ' + page + ' — ' + wines.length + ' vinos…');
-        return fetchNext(page + 1, 0);
+        // Send this page's wines immediately
+        return sendBatch(wines, page).then(function () {
+          show('Página ' + page + ' — ' + totalImported + ' guardados…');
+          return fetchNext(page + 1, 0);
+        });
       })
       .catch(function (err) {
-        // On fetch error, count as empty and try next page once
+        show('⚠️ Pág ' + page + ': ' + (err.message || 'error') + ' — continuando…');
         if (emptyStreak >= 1) return;
-        return delay(500).then(function () { return fetchNext(page + 1, emptyStreak + 1); });
+        return delay(600).then(function () { return fetchNext(page + 1, emptyStreak + 1); });
       });
   }
 
@@ -176,19 +200,24 @@
     .then(function (h1) {
       var items = getItems(h1);
       if (items.length === 0) {
-        show('⚠️ No se encontraron vinos en la página 1.<br>'
-          + 'Asegúrate de estar en bodeboca.com con sesión iniciada.', true);
+        show('⚠️ No se detectaron vinos en la página 1.<br>'
+          + 'Asegúrate de tener la sesión de Bodeboca activa.', true);
         return;
       }
-      items.forEach(function (it) { var w = mapItem(it); if (w) wines.push(w); });
-      show('Página 1 — ' + wines.length + ' vinos…');
-      return fetchNext(2, 0).then(function () {
-        if (wines.length === 0) {
-          show('⚠️ No se encontraron vinos. Recarga bodeboca.com e inténtalo de nuevo.', true);
-          return;
-        }
-        return send();
+      var batch = [];
+      items.forEach(function (it) { var w = mapItem(it); if (w) batch.push(w); });
+      return sendBatch(batch, 1).then(function () {
+        show('Página 1 — ' + totalImported + ' guardados…');
+        return fetchNext(2, 0).then(function () {
+          if (totalImported === 0 && totalSkipped === 0) {
+            show('⚠️ No se importó nada. Inténtalo de nuevo.', true);
+          } else {
+            show('✅ ' + totalImported + ' vinos importados'
+              + (totalSkipped > 0 ? ', ' + totalSkipped + ' ya existían' : '')
+              + '. <a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
+          }
+        });
       });
     })
-    .catch(function (e) { show('&#x274C; ' + (e.message || 'Error desconocido'), true); });
+    .catch(function (e) { show('❌ ' + (e.message || 'Error desconocido'), true); });
 })();

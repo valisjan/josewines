@@ -53,9 +53,6 @@ export const handler: Handler = async (event) => {
     if (!tokenRow) {
       return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token inválido' }) }
     }
-    if (tokenRow.used) {
-      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token ya utilizado' }) }
-    }
     if (new Date(tokenRow.expires_at) < new Date()) {
       return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token expirado' }) }
     }
@@ -87,9 +84,6 @@ export const handler: Handler = async (event) => {
     if (toInsert.length > 0) {
       await supabase.from('pending_wines').insert(toInsert)
     }
-
-    // Mark token as used
-    await supabase.from('import_tokens').update({ used: true }).eq('token', token)
 
     return {
       statusCode: 200,
