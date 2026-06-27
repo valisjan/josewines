@@ -103,10 +103,10 @@ export default function ImportPage() {
             {/* Step 3 */}
             <Step number={3} title="Ejecuta el bookmarklet en Bodeboca">
               <ol className="text-wine-400 text-sm space-y-1.5 list-none">
-                <li>1. Ve a <a href="https://www.bodeboca.com/pedidos" target="_blank" rel="noopener noreferrer" className="text-wine-300 underline underline-offset-2">bodeboca.com/pedidos</a> (con tu sesión iniciada)</li>
+                <li>1. Ve a <a href="https://www.bodeboca.com/mi-bodega?sort=created-desc&page=1" target="_blank" rel="noopener noreferrer" className="text-wine-300 underline underline-offset-2">bodeboca.com/mi-bodega</a> (con tu sesión iniciada)</li>
                 <li>2. Haz clic en el bookmarklet <strong className="text-wine-300">"📦 Importar Bodeboca"</strong></li>
-                <li>3. Espera mientras recorre todas tus páginas de pedidos automáticamente</li>
-                <li>4. Cuando termine, vuelve aquí y ve a <strong className="text-wine-300">Pendientes</strong> para confirmar los vinos</li>
+                <li>3. Espera — descarga tus 27 páginas en segundo plano sin moverte de la pestaña</li>
+                <li>4. Cuando aparezca ✅, haz clic en <strong className="text-wine-300">Ir a Pendientes</strong> para confirmar los vinos</li>
               </ol>
             </Step>
 
@@ -137,170 +137,151 @@ function Step({ number, title, children }: { number: number; title: string; chil
 
 function buildBookmarklet(token: string): string {
   const apiUrl = 'https://josewines.netlify.app/.netlify/functions/import-bodeboca'
+  const BASE_URL = 'https://www.bodeboca.com/mi-bodega?sort=created-desc&page='
 
   const script = `
 (function() {
   const TOKEN = '${token}';
   const API = '${apiUrl}';
+  const BASE = '${BASE_URL}';
   const wines = [];
-  let currentPage = 1;
-  let totalPages = 1;
 
   function showStatus(msg, done) {
     let el = document.getElementById('__jw_status');
     if (!el) {
       el = document.createElement('div');
       el.id = '__jw_status';
-      el.style.cssText = 'position:fixed;top:16px;right:16px;z-index:999999;background:#1a0505;color:#f4a8a8;border:1px solid #8f1919;border-radius:12px;padding:12px 16px;font-family:sans-serif;font-size:14px;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+      el.style.cssText = 'position:fixed;top:16px;right:16px;z-index:999999;background:#1a0505;color:#f4a8a8;border:1px solid #8f1919;border-radius:14px;padding:14px 18px;font-family:sans-serif;font-size:13px;max-width:300px;box-shadow:0 4px 24px rgba(0,0,0,0.6);line-height:1.5;';
       document.body.appendChild(el);
     }
-    el.innerHTML = '<strong style="color:white">Mi Bodega</strong><br>' + msg + (done ? '' : '<br><small style="color:#df4444">No cierres esta pestaña...</small>');
+    el.innerHTML = '<b style="color:white;font-size:14px">🍷 Mi Bodega</b><br>' + msg + (done ? '' : '<br><small style="color:#8f1919">No cierres esta pestaña...</small>');
   }
 
   function parseDate(str) {
     if (!str) return new Date().toISOString().split('T')[0];
     const m = str.match(/(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})/);
-    if (m) return m[3] + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    if (m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
     const m2 = str.match(/(\\d{4})[\\/-](\\d{1,2})[\\/-](\\d{1,2})/);
-    if (m2) return m2[1] + '-' + m2[2].padStart(2,'0') + '-' + m2[3].padStart(2,'0');
+    if (m2) return m2[1]+'-'+m2[2].padStart(2,'0')+'-'+m2[3].padStart(2,'0');
+    // Spanish month names
+    const months = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12};
+    const m3 = str.toLowerCase().match(/(\\d{1,2})\\s+de\\s+(\\w+)\\s+(?:de\\s+)?(\\d{4})/);
+    if (m3 && months[m3[2]]) return m3[3]+'-'+String(months[m3[2]]).padStart(2,'0')+'-'+m3[1].padStart(2,'0');
     return new Date().toISOString().split('T')[0];
   }
 
-  function parsePage() {
+  function parseDoc(doc) {
     const items = [];
+    const seen = new Set();
 
-    // Try to find pagination total
-    const pageInfo = document.querySelector('.pagination, [class*="paginat"]');
-    if (pageInfo) {
-      const nums = pageInfo.innerText.match(/\\d+/g);
-      if (nums) totalPages = Math.max(...nums.map(Number));
-    }
-
-    // Order containers - try multiple selectors Bodeboca might use
-    const orders = document.querySelectorAll(
-      '[class*="order-item"], [class*="pedido"], [data-order-id], .order-row, article[class*="order"], li[class*="order"]'
+    // Bodeboca mi-bodega: each wine is a card/article
+    // Try multiple possible container selectors
+    const containers = doc.querySelectorAll(
+      'article, .wine-card, .cellar-item, [class*="cellar"], [class*="wine-item"], ' +
+      '[class*="product-card"], .product, li.item, [data-wine-id], [data-product-id]'
     );
 
-    orders.forEach(order => {
-      // Order date
-      const dateEl = order.querySelector('[class*="date"], [class*="fecha"], time');
-      const date = parseDate(dateEl?.textContent?.trim());
+    containers.forEach((el, idx) => {
+      // Skip navigation, header, footer elements
+      if (el.closest('nav, header, footer, [class*="nav"], [class*="header"], [class*="footer"]')) return;
 
-      // Order ID
-      const orderIdEl = order.querySelector('[class*="order-id"], [class*="numero"], [class*="reference"]');
-      const orderId = orderIdEl?.textContent?.replace(/[^\\w-]/g,'').trim() || null;
-
-      // Product lines within the order
-      const products = order.querySelectorAll(
-        '[class*="product"], [class*="item"], [class*="line-item"], [class*="producto"]'
+      // Name — try multiple selectors in priority order
+      const nameEl = el.querySelector(
+        'h1, h2, h3, h4, [class*="wine-name"], [class*="product-name"], [class*="name"], [class*="title"], [itemprop="name"]'
       );
+      const name = nameEl?.textContent?.trim().replace(/\\s+/g,' ');
+      if (!name || name.length < 4 || name.length > 200) return;
+      if (seen.has(name)) return;
+      seen.add(name);
 
-      if (products.length > 0) {
-        products.forEach(prod => {
-          const nameEl = prod.querySelector('[class*="name"], [class*="title"], [class*="nombre"], h3, h4, a');
-          const name = nameEl?.textContent?.trim();
-          if (!name || name.length < 4) return;
+      // Vintage — often in name or separate element
+      const vintageEl = el.querySelector('[class*="vintage"], [class*="anada"], [class*="year"]');
+      const vintageText = vintageEl?.textContent?.trim() || name;
+      const vintageMatch = vintageText.match(/\\b(19[5-9]\\d|20[0-2]\\d)\\b/);
+      const vintage = vintageMatch ? parseInt(vintageMatch[0]) : null;
 
-          const priceEl = prod.querySelector('[class*="price"], [class*="precio"]');
-          const priceText = priceEl?.textContent?.replace(/[^\\d.,]/g,'').replace(',','.') || '0';
-          const price = parseFloat(priceText) || 0;
+      // Winery / bodega
+      const wineryEl = el.querySelector('[class*="winery"], [class*="bodega"], [class*="producer"], [class*="brand"]');
+      const winery = wineryEl?.textContent?.trim() || name.split(' ').slice(0,2).join(' ');
 
-          const qtyEl = prod.querySelector('[class*="qty"], [class*="quantity"], [class*="cantidad"], [class*="units"]');
-          const qty = parseInt(qtyEl?.textContent?.replace(/[^\\d]/g,'') || '1') || 1;
+      // Region / DO
+      const regionEl = el.querySelector('[class*="region"], [class*="do"], [class*="appellation"], [class*="denomination"]');
+      const region = regionEl?.textContent?.trim() || null;
 
-          const imgEl = prod.querySelector('img');
-          const imgUrl = imgEl?.src || null;
+      // Price — look for numeric price
+      const priceEls = el.querySelectorAll('[class*="price"], [class*="precio"], [itemprop="price"]');
+      let price = 0;
+      priceEls.forEach(p => {
+        const val = parseFloat(p.textContent?.replace(/[^\\d,]/g,'').replace(',','.') || '0');
+        if (val > 0 && val < 10000) price = val;
+      });
 
-          const vintageMatch = name.match(/\\b(19|20)\\d{2}\\b/);
-          const vintage = vintageMatch ? parseInt(vintageMatch[0]) : null;
+      // Quantity
+      const qtyEl = el.querySelector('[class*="qty"], [class*="quantity"], [class*="units"], [class*="bottles"], [class*="botellas"], [class*="cantidad"]');
+      const qty = parseInt(qtyEl?.textContent?.replace(/[^\\d]/g,'') || '1') || 1;
 
-          items.push({
-            name: name.substring(0, 200),
-            winery: name.split(' ').slice(0,2).join(' '),
-            vintage_year: vintage,
-            purchase_date: date,
-            price_per_bottle: qty > 0 ? Math.round((price / qty) * 100) / 100 : price,
-            units_purchased: qty,
-            region: null,
-            source_order_id: orderId ? orderId + '-' + items.length : null,
-            label_image_url: imgUrl,
-          });
-        });
-      } else {
-        // Fallback: treat the whole order as one item
-        const nameEl = order.querySelector('[class*="name"], [class*="title"], [class*="nombre"], h3, h4');
-        const name = nameEl?.textContent?.trim();
-        if (!name || name.length < 4) return;
+      // Date
+      const dateEl = el.querySelector('[class*="date"], [class*="fecha"], time, [class*="purchased"], [class*="compra"]');
+      const date = parseDate(dateEl?.textContent?.trim() || dateEl?.getAttribute('datetime') || '');
 
-        const priceEl = order.querySelector('[class*="price"], [class*="precio"], [class*="total"]');
-        const price = parseFloat(priceEl?.textContent?.replace(/[^\\d.,]/g,'').replace(',','.') || '0') || 0;
+      // Image
+      const imgEl = el.querySelector('img[src*="wine"], img[src*="vino"], img[src*="product"], img[src*="bottle"], img:not([src*="icon"]):not([src*="logo"])');
+      const imgUrl = imgEl?.src || null;
 
-        const imgEl = order.querySelector('img');
-        const vintageMatch = name.match(/\\b(19|20)\\d{2}\\b/);
+      // Unique ID from data attributes or URL
+      const link = el.querySelector('a[href*="/vino/"], a[href*="/wine/"], a[href*="/producto/"]');
+      const href = link?.getAttribute('href') || '';
+      const slugMatch = href.match(/\\/([\\w-]+)(?:\\?|$)/);
+      const sourceId = el.dataset.wineId || el.dataset.productId || el.dataset.orderId || slugMatch?.[1] || (idx + '-' + name.substring(0,20));
 
-        items.push({
-          name: name.substring(0, 200),
-          winery: name.split(' ').slice(0,2).join(' '),
-          vintage_year: vintageMatch ? parseInt(vintageMatch[0]) : null,
-          purchase_date: date,
-          price_per_bottle: price,
-          units_purchased: 1,
-          region: null,
-          source_order_id: orderId,
-          label_image_url: imgEl?.src || null,
-        });
-      }
+      items.push({
+        name,
+        winery,
+        vintage_year: vintage,
+        purchase_date: date,
+        price_per_bottle: price,
+        units_purchased: qty,
+        region,
+        source_order_id: String(sourceId),
+        label_image_url: imgUrl,
+      });
     });
 
     return items;
   }
 
-  async function goToPage(page) {
-    return new Promise(resolve => {
-      // Try common pagination patterns
-      const url = new URL(window.location.href);
-      url.searchParams.set('page', page);
-      window.history.pushState({}, '', url);
-
-      // Try clicking page link
-      const pageLink = document.querySelector('a[href*="page=' + page + '"], a[data-page="' + page + '"]');
-      if (pageLink) {
-        pageLink.click();
-        setTimeout(resolve, 2000);
-      } else {
-        window.location.href = url.toString();
-        setTimeout(resolve, 2500);
-      }
-    });
+  function detectTotalPages(doc) {
+    // Look for pagination
+    const pag = doc.querySelector('.pagination, [class*="paginat"], nav[aria-label*="page"], [class*="pages"]');
+    if (!pag) return 27; // fallback to known total
+    const nums = [...pag.querySelectorAll('a, span, button')]
+      .map(el => parseInt(el.textContent?.trim() || '0'))
+      .filter(n => n > 0 && n < 200);
+    return nums.length ? Math.max(...nums) : 27;
   }
 
   async function run() {
-    showStatus('Analizando página ' + currentPage + '...');
+    showStatus('Cargando página 1...');
 
-    // Parse first page
-    const firstBatch = parsePage();
-    wines.push(...firstBatch);
+    // Fetch page 1 to detect total pages
+    let resp = await fetch(BASE + '1', { credentials: 'include' });
+    let html = await resp.text();
+    let doc = new DOMParser().parseFromString(html, 'text/html');
+    const totalPages = detectTotalPages(doc);
+    wines.push(...parseDoc(doc));
 
-    // Detect total pages
-    const nextBtn = document.querySelector('a[rel="next"], [class*="next"]:not([disabled]), .pagination a:last-child');
-    if (!nextBtn && totalPages === 1) {
-      await send();
-      return;
+    showStatus('Página 1/' + totalPages + ' — ' + wines.length + ' vinos...');
+
+    for (let p = 2; p <= totalPages; p++) {
+      showStatus('Cargando página ' + p + '/' + totalPages + '...<br>' + wines.length + ' vinos encontrados');
+      resp = await fetch(BASE + p, { credentials: 'include' });
+      html = await resp.text();
+      doc = new DOMParser().parseFromString(html, 'text/html');
+      wines.push(...parseDoc(doc));
+      await new Promise(r => setTimeout(r, 300)); // small delay to be polite
     }
 
-    // Navigate through remaining pages
-    for (let p = 2; p <= Math.min(totalPages, 50); p++) {
-      showStatus('Importando página ' + p + ' de ' + totalPages + '...<br>(' + wines.length + ' vinos encontrados)');
-      await goToPage(p);
-      const batch = parsePage();
-      wines.push(...batch);
-    }
-
-    await send();
-  }
-
-  async function send() {
-    showStatus('Enviando ' + wines.length + ' vinos a tu bodega...');
+    showStatus('Enviando ' + wines.length + ' vinos...');
     try {
       const res = await fetch(API, {
         method: 'POST',
@@ -309,16 +290,16 @@ function buildBookmarklet(token: string): string {
       });
       const data = await res.json();
       if (res.ok) {
-        showStatus('✅ ¡Listo! ' + data.imported + ' vinos importados' + (data.skipped > 0 ? ', ' + data.skipped + ' ya existían' : '') + '.<br>Vuelve a josewines.netlify.app → Pendientes para confirmarlos.', true);
+        showStatus('✅ ' + data.imported + ' vinos importados' + (data.skipped > 0 ? ', ' + data.skipped + ' ya existían' : '') + '.<br><a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
       } else {
-        showStatus('❌ Error: ' + (data.error || 'Inténtalo de nuevo'), true);
+        showStatus('❌ ' + (data.error || 'Error desconocido'), true);
       }
     } catch(e) {
-      showStatus('❌ Error de conexión. Comprueba que estás conectado.', true);
+      showStatus('❌ Error de conexión: ' + e.message, true);
     }
   }
 
-  run();
+  run().catch(e => showStatus('❌ Error: ' + e.message, true));
 })();
   `.trim()
 
