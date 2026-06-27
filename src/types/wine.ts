@@ -33,6 +33,7 @@ export interface PendingWine {
   source_email_subject: string | null
   source_order_id: string | null
   raw_email_snippet: string | null
+  label_image_url?: string | null
   created_at: string
   selected?: boolean
   personal_score?: number | null

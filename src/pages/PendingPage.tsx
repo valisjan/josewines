@@ -60,6 +60,7 @@ export default function PendingPage() {
       personal_score: w.personal_score ?? null,
       notes: w.notes ?? null,
       source_order_id: w.source_order_id,
+      label_image_url: w.label_image_url ?? null,
     }))
 
     await supabase.from('wines').insert(wines)
