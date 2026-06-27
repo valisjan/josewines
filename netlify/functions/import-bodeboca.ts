@@ -43,57 +43,38 @@ export const handler: Handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Token o vinos faltantes' }) }
     }
 
-    // Validate token
-    const { data: tokenRow, error: tokenErr } = await supabase
-      .from('import_tokens')
-      .select('user_id, used, expires_at')
-      .eq('token', token)
-      .single()
-
-    if (tokenErr || !tokenRow) {
-      const reason = tokenErr ? tokenErr.message : 'no encontrado'
-      console.error('Token lookup failed:', reason, '| token:', token.slice(0, 8))
-      const missingKey = !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY
-      return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({
-          error: missingKey
-            ? 'Variables de entorno no configuradas en Netlify (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)'
-            : `Token inválido: ${reason}`,
-        }),
-      }
-    }
-    if (new Date(tokenRow.expires_at) < new Date()) {
-      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token expirado' }) }
+    // Verify the Supabase JWT to identify the user — no custom token table needed
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+    if (authErr || !user) {
+      console.error('JWT verification failed:', authErr?.message)
+      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Sesión inválida. Genera un nuevo enlace desde la app.' }) }
     }
 
-    const userId = tokenRow.user_id
+    const userId = user.id
 
-    // Check for duplicates by order ID to avoid re-importing
-    const orderIds = wines.map(w => w.source_order_id).filter(Boolean)
-    const { data: existing } = await supabase
-      .from('pending_wines')
-      .select('source_order_id')
-      .eq('user_id', userId)
-      .in('source_order_id', orderIds)
+    // Deduplicate: skip wines already in pending_wines or wines table
+    const orderIds = wines.map(w => w.source_order_id).filter(Boolean) as string[]
 
-    const existingIds = new Set((existing ?? []).map(r => r.source_order_id))
+    const [{ data: existingPending }, { data: existingWines }] = await Promise.all([
+      supabase.from('pending_wines').select('source_order_id').eq('user_id', userId).in('source_order_id', orderIds),
+      supabase.from('wines').select('source_order_id').eq('user_id', userId).in('source_order_id', orderIds),
+    ])
 
-    const { data: existingWines } = await supabase
-      .from('wines')
-      .select('source_order_id')
-      .eq('user_id', userId)
-      .in('source_order_id', orderIds)
-
-    const existingWineIds = new Set((existingWines ?? []).map(r => r.source_order_id))
+    const existingIds = new Set([
+      ...((existingPending ?? []).map(r => r.source_order_id)),
+      ...((existingWines ?? []).map(r => r.source_order_id)),
+    ])
 
     const toInsert = wines
-      .filter(w => !existingIds.has(w.source_order_id) && !existingWineIds.has(w.source_order_id))
+      .filter(w => w.source_order_id && !existingIds.has(w.source_order_id))
       .map(w => ({ ...w, user_id: userId }))
 
     if (toInsert.length > 0) {
-      await supabase.from('pending_wines').insert(toInsert)
+      const { error: insertErr } = await supabase.from('pending_wines').insert(toInsert)
+      if (insertErr) {
+        console.error('Insert error:', insertErr.message)
+        return { statusCode: 500, headers, body: JSON.stringify({ error: 'Error al guardar: ' + insertErr.message }) }
+      }
     }
 
     return {

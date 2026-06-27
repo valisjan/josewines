@@ -2,28 +2,16 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, RefreshCw, CheckCircle2, ExternalLink } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../context/AuthContext'
 
 export default function ImportPage() {
-  const { user } = useAuth()
   const navigate = useNavigate()
   const [token, setToken] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
 
   const generateToken = async () => {
-    if (!user) return
     setGenerating(true)
-
-    // Delete any existing unused tokens for this user
-    await supabase.from('import_tokens').delete().eq('user_id', user.id).eq('used', false)
-
-    const { data } = await supabase
-      .from('import_tokens')
-      .insert({ user_id: user.id })
-      .select('token')
-      .single()
-
-    setToken(data?.token ?? null)
+    const { data: { session } } = await supabase.auth.getSession()
+    setToken(session?.access_token ?? null)
     setGenerating(false)
   }
 
@@ -58,7 +46,7 @@ export default function ImportPage() {
           {token && (
             <p className="text-green-400 text-xs mt-2 flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              Enlace generado · válido 2 horas · un solo uso
+              Enlace listo · válido mientras tengas sesión abierta
             </p>
           )}
         </Step>
