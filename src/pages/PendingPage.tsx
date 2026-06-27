@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { CheckCircle2, Trash2, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { PendingWine } from '../types/wine'
@@ -74,9 +75,13 @@ export default function PendingPage() {
     <div className="px-4 py-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold text-white">Pendientes</h1>
-        {pending.length > 0 && (
-          <span className="text-sm text-wine-400">{selectedCount} seleccionados</span>
-        )}
+        <Link
+          to="/importar"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wine-800/60 hover:bg-wine-700/60 text-wine-300 text-xs font-medium transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Importar Bodeboca
+        </Link>
       </div>
       <p className="text-wine-400 text-sm mb-6">
         Revisa los vinos detectados en tus emails. Selecciona cuáles añadir a tu bodega.

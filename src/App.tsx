@@ -6,6 +6,7 @@ import CellarPage from './pages/CellarPage'
 import PendingPage from './pages/PendingPage'
 import StatsPage from './pages/StatsPage'
 import WineDetailPage from './pages/WineDetailPage'
+import ImportPage from './pages/ImportPage'
 
 function ProtectedRoutes() {
   const { session, loading } = useAuth()
@@ -25,6 +26,7 @@ function ProtectedRoutes() {
         <Route path="pendientes" element={<PendingPage />} />
         <Route path="estadisticas" element={<StatsPage />} />
         <Route path="vino/:id" element={<WineDetailPage />} />
+        <Route path="importar" element={<ImportPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
