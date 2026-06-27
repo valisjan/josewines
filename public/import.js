@@ -98,7 +98,10 @@
         var namePos = strippedLower.indexOf(prefix);
         if (namePos < 0) continue;
 
-        if (idx === 0) log('Nombre "' + prefix + '" encontrado en posición', namePos);
+        if (idx === 0) {
+          log('Nombre "' + prefix + '" en pos ' + namePos + '. HTML alrededor:',
+            html.slice(Math.max(0, namePos - 300), namePos + 600));
+        }
 
         // Nearest <img> BEFORE the name (within 4000 chars)
         var windowStart = Math.max(0, namePos - 4000);
