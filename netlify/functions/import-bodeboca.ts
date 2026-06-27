@@ -44,14 +44,25 @@ export const handler: Handler = async (event) => {
     }
 
     // Validate token
-    const { data: tokenRow } = await supabase
+    const { data: tokenRow, error: tokenErr } = await supabase
       .from('import_tokens')
       .select('user_id, used, expires_at')
       .eq('token', token)
       .single()
 
-    if (!tokenRow) {
-      return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token inválido' }) }
+    if (tokenErr || !tokenRow) {
+      const reason = tokenErr ? tokenErr.message : 'no encontrado'
+      console.error('Token lookup failed:', reason, '| token:', token.slice(0, 8))
+      const missingKey = !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          error: missingKey
+            ? 'Variables de entorno no configuradas en Netlify (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)'
+            : `Token inválido: ${reason}`,
+        }),
+      }
     }
     if (new Date(tokenRow.expires_at) < new Date()) {
       return { statusCode: 401, headers, body: JSON.stringify({ error: 'Token expirado' }) }
