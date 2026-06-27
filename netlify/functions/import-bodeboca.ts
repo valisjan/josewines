@@ -52,37 +52,65 @@ export const handler: Handler = async (event) => {
 
     const userId = user.id
 
-    // Deduplicate: skip wines already in pending_wines or wines table
     const orderIds = wines.map(w => w.source_order_id).filter(Boolean) as string[]
 
+    // Fetch existing records in both tables, including their current label_image_url
     const [{ data: existingPending }, { data: existingWines }] = await Promise.all([
-      supabase.from('pending_wines').select('source_order_id').eq('user_id', userId).in('source_order_id', orderIds),
-      supabase.from('wines').select('source_order_id').eq('user_id', userId).in('source_order_id', orderIds),
+      supabase.from('pending_wines').select('source_order_id, label_image_url').eq('user_id', userId).in('source_order_id', orderIds),
+      supabase.from('wines').select('source_order_id, label_image_url').eq('user_id', userId).in('source_order_id', orderIds),
     ])
 
-    const existingIds = new Set([
-      ...((existingPending ?? []).map(r => r.source_order_id)),
-      ...((existingWines ?? []).map(r => r.source_order_id)),
-    ])
+    // Map source_order_id → has image already
+    const pendingMap = new Map((existingPending ?? []).map(r => [r.source_order_id, !!r.label_image_url]))
+    const winesMap  = new Map((existingWines  ?? []).map(r => [r.source_order_id, !!r.label_image_url]))
 
-    const toInsert = wines
-      .filter(w => w.source_order_id && !existingIds.has(w.source_order_id))
-      .map(w => ({ ...w, user_id: userId }))
+    const toInsert: typeof wines = []
+    const imagesToPatchPending: { id_col: string; img: string }[] = []
+    const imagesToPatchWines:   { id_col: string; img: string }[] = []
 
-    if (toInsert.length > 0) {
-      const { error: insertErr } = await supabase.from('pending_wines').insert(toInsert)
-      if (insertErr) {
-        console.error('Insert error:', insertErr.message)
-        return { statusCode: 500, headers, body: JSON.stringify({ error: 'Error al guardar: ' + insertErr.message }) }
+    for (const w of wines) {
+      if (!w.source_order_id) continue
+      const inPending = pendingMap.has(w.source_order_id)
+      const inWines   = winesMap.has(w.source_order_id)
+
+      if (!inPending && !inWines) {
+        toInsert.push({ ...w, user_id: userId })
+      } else if (w.label_image_url) {
+        // Already exists — patch image if missing
+        if (inPending && !pendingMap.get(w.source_order_id))
+          imagesToPatchPending.push({ id_col: w.source_order_id, img: w.label_image_url })
+        if (inWines && !winesMap.get(w.source_order_id))
+          imagesToPatchWines.push({ id_col: w.source_order_id, img: w.label_image_url })
       }
     }
 
+    const ops: Promise<unknown>[] = []
+
+    if (toInsert.length > 0)
+      ops.push(supabase.from('pending_wines').insert(toInsert).then(({ error }) => {
+        if (error) throw new Error('Insert error: ' + error.message)
+      }))
+
+    for (const p of imagesToPatchPending)
+      ops.push(supabase.from('pending_wines')
+        .update({ label_image_url: p.img })
+        .eq('user_id', userId).eq('source_order_id', p.id_col))
+
+    for (const p of imagesToPatchWines)
+      ops.push(supabase.from('wines')
+        .update({ label_image_url: p.img })
+        .eq('user_id', userId).eq('source_order_id', p.id_col))
+
+    await Promise.all(ops)
+
+    const patched = imagesToPatchPending.length + imagesToPatchWines.length
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         imported: toInsert.length,
-        skipped: wines.length - toInsert.length,
+        skipped: wines.length - toInsert.length - patched,
+        patched,
       }),
     }
   } catch (err) {
