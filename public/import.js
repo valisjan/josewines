@@ -49,6 +49,21 @@
     return out;
   }
 
+  // Extract an attribute value from an <img> tag string
+  function extractAttr(tag, attrName) {
+    var pats = [' ' + attrName + '="', ' ' + attrName + "='"];
+    for (var i = 0; i < pats.length; i++) {
+      var p = tag.indexOf(pats[i]);
+      if (p < 0) continue;
+      var v = p + pats[i].length;
+      var quote = pats[i][pats[i].length - 1];
+      var e = tag.indexOf(quote, v);
+      if (e < 0) continue;
+      return tag.slice(v, e);
+    }
+    return null;
+  }
+
   // Extract src from an <img> tag; handles double and single quotes, lazy-load attrs
   function imgSrc(tag) {
     var attrs = ['data-lazy-src', 'data-src', 'data-original', 'src'];
@@ -79,59 +94,62 @@
     return lo.indexOf('.svg') < 0 && lo.indexOf('.gif') < 0;
   }
 
-  // Find each wine's label image in the page HTML.
-  // Searches in script-stripped HTML so names are matched in visible text,
-  // not inside JSON strings inside <script> blocks.
+  // Find each wine's label image by matching the wine name against <img alt="...">
+  // attributes in the page. Bodeboca puts the wine name directly in alt.
   function findImages(html, items) {
+    // Build alt → src map from all <img> tags (script blocks stripped to avoid
+    // matching names inside JSON strings embedded in <script> content).
     var stripped = stripScripts(html);
-    var strippedLower = stripped.toLowerCase();
+    var altToSrc = {};
+    var pos = 0;
+    while (pos < stripped.length) {
+      var ip = stripped.indexOf('<img', pos);
+      if (ip < 0) break;
+      var ie = stripped.indexOf('>', ip);
+      if (ie < 0) break;
+      var tag = stripped.slice(ip, ie + 1);
+      pos = ie + 1;
 
-    return items.map(function (it, idx) {
+      var alt = extractAttr(tag, 'alt');
+      if (!alt) continue;
+      var altKey = alt.toLowerCase().trim();
+      // Bodeboca sometimes prefixes alt with "Producto: "
+      if (altKey.startsWith('producto: ')) altKey = altKey.slice(10);
+      if (!altKey || altKey.length < 4) continue;
+
+      var src = imgSrc(tag);
+      if (src && isProductImg(src) && !altToSrc[altKey]) {
+        altToSrc[altKey] = src;
+      }
+    }
+
+    var found = 0;
+    var result = items.map(function (it) {
       var name = (it.item_name || '').toLowerCase().trim();
       if (!name) return null;
 
-      // Try progressively shorter prefixes
-      var prefixes = [name.slice(0, 35), name.slice(0, 22), name.slice(0, 13)];
-      for (var pi = 0; pi < prefixes.length; pi++) {
-        var prefix = prefixes[pi].trim();
-        if (!prefix || prefix.length < 6) continue;
-        var namePos = strippedLower.indexOf(prefix);
-        if (namePos < 0) continue;
+      // 1. Exact match
+      if (altToSrc[name]) { found++; return altToSrc[name]; }
 
-
-        // Nearest <img> BEFORE the name (within 4000 chars).
-        // Extend 400 chars past namePos so an <img> whose alt= contains the
-        // wine name (and whose closing /> falls after namePos) is still captured.
-        var windowStart = Math.max(0, namePos - 4000);
-        var chunk = html.slice(windowStart, namePos + 400);
-        var best = null;
-        var pos = 0;
-        while (pos < chunk.length) {
-          var ip = chunk.indexOf('<img', pos);
-          if (ip < 0) break;
-          var ie = chunk.indexOf('>', ip);
-          if (ie < 0) break;
-          var src = imgSrc(chunk.slice(ip, ie + 1));
-          if (src && isProductImg(src)) best = src;
-          pos = ip + 1;
-        }
-        if (best) return best;
-
-        // Also try AFTER (within 1200 chars)
-        var after = html.slice(namePos, Math.min(html.length, namePos + 1200));
-        var ip2 = 0;
-        while (ip2 < after.length) {
-          var ipos = after.indexOf('<img', ip2);
-          if (ipos < 0) break;
-          var ie2 = after.indexOf('>', ipos);
-          if (ie2 < 0) break;
-          var src2 = imgSrc(after.slice(ipos, ie2 + 1));
-          if (src2 && isProductImg(src2)) return src2;
-          ip2 = ipos + 1;
+      // 2. Match ignoring trailing vintage year (e.g. "merlot 2021" vs "merlot 2020")
+      var nameNoYear = name.replace(/\s+\d{4}$/, '').trim();
+      for (var k in altToSrc) {
+        if (k.replace(/\s+\d{4}$/, '').trim() === nameNoYear) {
+          found++; return altToSrc[k];
         }
       }
+
+      // 3. Prefix match on first 25 chars
+      var pre = name.slice(0, 25);
+      for (var k2 in altToSrc) {
+        if (k2.slice(0, 25) === pre) { found++; return altToSrc[k2]; }
+      }
+
       return null;
     });
+
+    log('Imágenes encontradas: ' + found + '/' + items.length);
+    return result;
   }
 
   function getItems(html) {
@@ -220,7 +238,6 @@
     var withImages = rawItems.filter(Boolean).map(function (it, idx) {
       return { item: it, img: images[idx] || null };
     });
-    log('Imágenes encontradas: ' + withImages.filter(function(x){return x.img;}).length + '/' + withImages.length);
 
     var result = [];
     withImages.forEach(function (x) {
