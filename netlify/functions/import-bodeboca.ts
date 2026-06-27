@@ -15,7 +15,6 @@ interface BookmarkletWine {
   units_purchased: number
   region: string | null
   source_order_id: string | null
-  label_image_url: string | null
 }
 
 export const handler: Handler = async (event) => {

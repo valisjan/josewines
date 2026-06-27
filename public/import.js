@@ -150,7 +150,6 @@
       units_purchased: parseInt(it.quantity) || 1,
       region: it.item_category4 || null,
       source_order_id: id,
-      label_image_url: null,
     };
   }
 
