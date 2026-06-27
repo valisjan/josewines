@@ -145,161 +145,97 @@ function buildBookmarklet(token: string): string {
   const API = '${apiUrl}';
   const BASE = '${BASE_URL}';
   const wines = [];
+  const seenIds = new Set();
 
   function showStatus(msg, done) {
     let el = document.getElementById('__jw_status');
     if (!el) {
       el = document.createElement('div');
       el.id = '__jw_status';
-      el.style.cssText = 'position:fixed;top:16px;right:16px;z-index:999999;background:#1a0505;color:#f4a8a8;border:1px solid #8f1919;border-radius:14px;padding:14px 18px;font-family:sans-serif;font-size:13px;max-width:300px;box-shadow:0 4px 24px rgba(0,0,0,0.6);line-height:1.5;';
+      el.style.cssText = 'position:fixed;top:16px;right:16px;z-index:999999;background:#1a0505;color:#f4a8a8;border:1px solid #8f1919;border-radius:14px;padding:14px 18px;font-family:sans-serif;font-size:13px;max-width:300px;box-shadow:0 4px 24px rgba(0,0,0,0.6);line-height:1.6;';
       document.body.appendChild(el);
     }
-    el.innerHTML = '<b style="color:white;font-size:14px">🍷 Mi Bodega</b><br>' + msg + (done ? '' : '<br><small style="color:#8f1919">No cierres esta pestaña...</small>');
+    el.innerHTML = '<b style="color:white;font-size:14px">🍷 Mi Bodega</b><br>' + msg + (done ? '' : '<br><small style="color:#771b1b">No cierres esta pestaña...</small>');
   }
 
-  function parseDate(str) {
-    if (!str) return new Date().toISOString().split('T')[0];
-    const m = str.match(/(\\d{1,2})[\\/-](\\d{1,2})[\\/-](\\d{4})/);
-    if (m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
-    const m2 = str.match(/(\\d{4})[\\/-](\\d{1,2})[\\/-](\\d{1,2})/);
-    if (m2) return m2[1]+'-'+m2[2].padStart(2,'0')+'-'+m2[3].padStart(2,'0');
-    // Spanish month names
-    const months = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,octubre:10,noviembre:11,diciembre:12};
-    const m3 = str.toLowerCase().match(/(\\d{1,2})\\s+de\\s+(\\w+)\\s+(?:de\\s+)?(\\d{4})/);
-    if (m3 && months[m3[2]]) return m3[3]+'-'+String(months[m3[2]]).padStart(2,'0')+'-'+m3[1].padStart(2,'0');
-    return new Date().toISOString().split('T')[0];
+  // Bodeboca embeds ALL wine data in the dataLayer Google Analytics script.
+  // Fields: item_name, item_category (winery), item_category3 (country),
+  //         item_category4 (region/DO), item_category5 (vintage), price, quantity, item_id
+  function extractItems(html) {
+    const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+    let m;
+    while ((m = scriptRe.exec(html)) !== null) {
+      const src = m[1];
+      if (!src.includes('dataLayer') || !src.includes('ecommerce')) continue;
+      const dlRe = /dataLayer\s*=\s*(\[[\s\S]*?\])\s*;/;
+      const dlM = dlRe.exec(src);
+      if (!dlM) continue;
+      try {
+        const dl = JSON.parse(dlM[1]);
+        const ev = dl.find(function(e) { return e.ecommerce && e.ecommerce.items; });
+        if (ev) return ev.ecommerce.items;
+      } catch(e) {}
+    }
+    return [];
   }
 
-  function parseDoc(doc) {
-    const items = [];
-    const seen = new Set();
-
-    // Bodeboca mi-bodega: each wine is a card/article
-    // Try multiple possible container selectors
-    const containers = doc.querySelectorAll(
-      'article, .wine-card, .cellar-item, [class*="cellar"], [class*="wine-item"], ' +
-      '[class*="product-card"], .product, li.item, [data-wine-id], [data-product-id]'
-    );
-
-    containers.forEach((el, idx) => {
-      // Skip navigation, header, footer elements
-      if (el.closest('nav, header, footer, [class*="nav"], [class*="header"], [class*="footer"]')) return;
-
-      // Name — try multiple selectors in priority order
-      const nameEl = el.querySelector(
-        'h1, h2, h3, h4, [class*="wine-name"], [class*="product-name"], [class*="name"], [class*="title"], [itemprop="name"]'
-      );
-      const name = nameEl?.textContent?.trim().replace(/\\s+/g,' ');
-      if (!name || name.length < 4 || name.length > 200) return;
-      if (seen.has(name)) return;
-      seen.add(name);
-
-      // Vintage — often in name or separate element
-      const vintageEl = el.querySelector('[class*="vintage"], [class*="anada"], [class*="year"]');
-      const vintageText = vintageEl?.textContent?.trim() || name;
-      const vintageMatch = vintageText.match(/\\b(19[5-9]\\d|20[0-2]\\d)\\b/);
-      const vintage = vintageMatch ? parseInt(vintageMatch[0]) : null;
-
-      // Winery / bodega
-      const wineryEl = el.querySelector('[class*="winery"], [class*="bodega"], [class*="producer"], [class*="brand"]');
-      const winery = wineryEl?.textContent?.trim() || name.split(' ').slice(0,2).join(' ');
-
-      // Region / DO
-      const regionEl = el.querySelector('[class*="region"], [class*="do"], [class*="appellation"], [class*="denomination"]');
-      const region = regionEl?.textContent?.trim() || null;
-
-      // Price — look for numeric price
-      const priceEls = el.querySelectorAll('[class*="price"], [class*="precio"], [itemprop="price"]');
-      let price = 0;
-      priceEls.forEach(p => {
-        const val = parseFloat(p.textContent?.replace(/[^\\d,]/g,'').replace(',','.') || '0');
-        if (val > 0 && val < 10000) price = val;
-      });
-
-      // Quantity
-      const qtyEl = el.querySelector('[class*="qty"], [class*="quantity"], [class*="units"], [class*="bottles"], [class*="botellas"], [class*="cantidad"]');
-      const qty = parseInt(qtyEl?.textContent?.replace(/[^\\d]/g,'') || '1') || 1;
-
-      // Date
-      const dateEl = el.querySelector('[class*="date"], [class*="fecha"], time, [class*="purchased"], [class*="compra"]');
-      const date = parseDate(dateEl?.textContent?.trim() || dateEl?.getAttribute('datetime') || '');
-
-      // Image
-      const imgEl = el.querySelector('img[src*="wine"], img[src*="vino"], img[src*="product"], img[src*="bottle"], img:not([src*="icon"]):not([src*="logo"])');
-      const imgUrl = imgEl?.src || null;
-
-      // Unique ID from data attributes or URL
-      const link = el.querySelector('a[href*="/vino/"], a[href*="/wine/"], a[href*="/producto/"]');
-      const href = link?.getAttribute('href') || '';
-      const slugMatch = href.match(/\\/([\\w-]+)(?:\\?|$)/);
-      const sourceId = el.dataset.wineId || el.dataset.productId || el.dataset.orderId || slugMatch?.[1] || (idx + '-' + name.substring(0,20));
-
-      items.push({
-        name,
-        winery,
-        vintage_year: vintage,
-        purchase_date: date,
-        price_per_bottle: price,
-        units_purchased: qty,
-        region,
-        source_order_id: String(sourceId),
-        label_image_url: imgUrl,
-      });
-    });
-
-    return items;
-  }
-
-  function detectTotalPages(doc) {
-    // Look for pagination
-    const pag = doc.querySelector('.pagination, [class*="paginat"], nav[aria-label*="page"], [class*="pages"]');
-    if (!pag) return 27; // fallback to known total
-    const nums = [...pag.querySelectorAll('a, span, button')]
-      .map(el => parseInt(el.textContent?.trim() || '0'))
-      .filter(n => n > 0 && n < 200);
+  function detectTotalPages(html) {
+    // Find highest page= number in pagination links
+    const nums = [];
+    const re = /[?&]page=(\\d+)/g;
+    let m;
+    while ((m = re.exec(html)) !== null) nums.push(parseInt(m[1]));
     return nums.length ? Math.max(...nums) : 27;
+  }
+
+  function mapItem(it) {
+    const id = String(it.item_id || it.id || Math.random());
+    if (seenIds.has(id)) return null;
+    seenIds.add(id);
+    return {
+      name:             (it.item_name || '').substring(0, 200),
+      winery:           (it.item_category || it.item_brand || '').substring(0, 100),
+      vintage_year:     it.item_category5 ? parseInt(it.item_category5) : null,
+      purchase_date:    new Date().toISOString().split('T')[0],
+      price_per_bottle: parseFloat(it.price) || 0,
+      units_purchased:  parseInt(it.quantity) || 1,
+      region:           it.item_category4 || null,
+      source_order_id:  id,
+      label_image_url:  null,
+    };
   }
 
   async function run() {
     showStatus('Cargando página 1...');
-
-    // Fetch page 1 to detect total pages
-    let resp = await fetch(BASE + '1', { credentials: 'include' });
-    let html = await resp.text();
-    let doc = new DOMParser().parseFromString(html, 'text/html');
-    const totalPages = detectTotalPages(doc);
-    wines.push(...parseDoc(doc));
-
+    const r1 = await fetch(BASE + '1', { credentials: 'include' });
+    const h1 = await r1.text();
+    const totalPages = detectTotalPages(h1);
+    extractItems(h1).forEach(function(it) { const w = mapItem(it); if (w) wines.push(w); });
     showStatus('Página 1/' + totalPages + ' — ' + wines.length + ' vinos...');
 
     for (let p = 2; p <= totalPages; p++) {
-      showStatus('Cargando página ' + p + '/' + totalPages + '...<br>' + wines.length + ' vinos encontrados');
-      resp = await fetch(BASE + p, { credentials: 'include' });
-      html = await resp.text();
-      doc = new DOMParser().parseFromString(html, 'text/html');
-      wines.push(...parseDoc(doc));
-      await new Promise(r => setTimeout(r, 300)); // small delay to be polite
+      showStatus('Página ' + p + '/' + totalPages + ' — ' + wines.length + ' vinos...');
+      const r = await fetch(BASE + p, { credentials: 'include' });
+      const h = await r.text();
+      extractItems(h).forEach(function(it) { const w = mapItem(it); if (w) wines.push(w); });
+      await new Promise(function(res) { setTimeout(res, 250); });
     }
 
     showStatus('Enviando ' + wines.length + ' vinos...');
-    try {
-      const res = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: TOKEN, wines }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showStatus('✅ ' + data.imported + ' vinos importados' + (data.skipped > 0 ? ', ' + data.skipped + ' ya existían' : '') + '.<br><a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
-      } else {
-        showStatus('❌ ' + (data.error || 'Error desconocido'), true);
-      }
-    } catch(e) {
-      showStatus('❌ Error de conexión: ' + e.message, true);
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN, wines: wines }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showStatus('✅ ' + data.imported + ' vinos importados' + (data.skipped > 0 ? ', ' + data.skipped + ' ya existían' : '') + '.<br><a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
+    } else {
+      showStatus('❌ ' + (data.error || 'Error'), true);
     }
   }
 
-  run().catch(e => showStatus('❌ Error: ' + e.message, true));
+  run().catch(function(e) { showStatus('❌ ' + e.message, true); });
 })();
   `.trim()
 
