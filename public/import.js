@@ -31,52 +31,78 @@
     return new Promise(function (r) { setTimeout(r, ms); });
   }
 
-  // Extract the src URL from an <img> tag, trying lazy-load attributes first
+  // Replace <script>...</script> content with spaces (preserving positions)
+  // so wine names found later are in visible HTML, not JSON strings.
+  function stripScripts(html) {
+    var out = '';
+    var pos = 0;
+    while (pos < html.length) {
+      var s = html.indexOf('<script', pos);
+      if (s < 0) { out += html.slice(pos); break; }
+      out += html.slice(pos, s);
+      var e = html.indexOf('</script>', s);
+      if (e < 0) { out += html.slice(s); break; }
+      e += 9;
+      out += ' '.repeat(e - s); // same length → positions stay valid
+      pos = e;
+    }
+    return out;
+  }
+
+  // Extract src from an <img> tag; handles double and single quotes, lazy-load attrs
   function imgSrc(tag) {
     var attrs = ['data-lazy-src', 'data-src', 'data-original', 'src'];
     for (var a = 0; a < attrs.length; a++) {
-      var pat = attrs[a] + '="';
-      var p = tag.indexOf(pat);
-      if (p < 0) continue;
-      var v = p + pat.length;
-      var e = tag.indexOf('"', v);
-      if (e < 0) continue;
-      var s = tag.slice(v, e);
-      if (s && !s.startsWith('data:') && s.length > 8) {
-        return s.startsWith('http') ? s : 'https://www.bodeboca.com' + s;
+      for (var q = 0; q < 2; q++) {
+        var quote = q === 0 ? '"' : "'";
+        var pat = attrs[a] + '=' + quote;
+        var p = tag.indexOf(pat);
+        if (p < 0) continue;
+        var v = p + pat.length;
+        var e = tag.indexOf(quote, v);
+        if (e < 0) continue;
+        var s = tag.slice(v, e);
+        if (s && !s.startsWith('data:') && s.length > 8) {
+          return s.startsWith('http') ? s : 'https://www.bodeboca.com' + s;
+        }
       }
     }
     return null;
   }
 
-  // True if the src looks like a product photo (not a logo/icon/sprite/flag)
+  // True if the src looks like a product photo (not a logo/icon/sprite)
   function isProductImg(src) {
     if (!src) return false;
     var lo = src.toLowerCase();
-    var bad = ['logo', 'icon', 'sprite', 'banner', 'payment', 'avatar', 'flag', 'star', 'rating', 'check', 'arrow', 'close', 'search'];
+    var bad = ['logo', 'icon', 'sprite', 'banner', 'payment', 'avatar', 'flag'];
     for (var i = 0; i < bad.length; i++) if (lo.indexOf(bad[i]) >= 0) return false;
     return lo.indexOf('.svg') < 0 && lo.indexOf('.gif') < 0;
   }
 
-  // For each item, find its wine-label image by locating the item name in the HTML
-  // and returning the nearest <img> before (or just after) that position.
+  // Find each wine's label image in the page HTML.
+  // Searches in script-stripped HTML so names are matched in visible text,
+  // not inside JSON strings inside <script> blocks.
   function findImages(html, items) {
-    var htmlLower = html.toLowerCase();
-    return items.map(function (it) {
+    var stripped = stripScripts(html);
+    var strippedLower = stripped.toLowerCase();
+
+    return items.map(function (it, idx) {
       var name = (it.item_name || '').toLowerCase().trim();
       if (!name) return null;
 
-      // Try progressively shorter prefixes in case name is truncated in HTML
-      var prefixes = [name.slice(0, 30), name.slice(0, 20), name.slice(0, 12)];
+      // Try progressively shorter prefixes
+      var prefixes = [name.slice(0, 35), name.slice(0, 22), name.slice(0, 13)];
       for (var pi = 0; pi < prefixes.length; pi++) {
         var prefix = prefixes[pi].trim();
         if (!prefix || prefix.length < 6) continue;
-        var namePos = htmlLower.indexOf(prefix);
+        var namePos = strippedLower.indexOf(prefix);
         if (namePos < 0) continue;
 
-        // Search for the nearest <img> BEFORE the name (within 3000 chars)
-        var windowStart = Math.max(0, namePos - 3000);
-        var chunk = html.slice(windowStart, namePos);
+        if (idx === 0) log('Nombre "' + prefix + '" encontrado en posición', namePos);
+
+        // Nearest <img> BEFORE the name (within 4000 chars)
+        var windowStart = Math.max(0, namePos - 4000);
+        var chunk = html.slice(windowStart, namePos); // use original for img parsing
         var best = null;
         var pos = 0;
         while (pos < chunk.length) {
@@ -90,15 +116,17 @@
         }
         if (best) return best;
 
-        // If not found before, try AFTER the name (within 800 chars)
-        var afterChunk = html.slice(namePos, Math.min(html.length, namePos + 800));
-        var ip2 = afterChunk.indexOf('<img');
-        if (ip2 >= 0) {
-          var ie2 = afterChunk.indexOf('>', ip2);
-          if (ie2 >= 0) {
-            var src2 = imgSrc(afterChunk.slice(ip2, ie2 + 1));
-            if (src2 && isProductImg(src2)) return src2;
-          }
+        // Also try AFTER (within 1200 chars)
+        var after = html.slice(namePos, Math.min(html.length, namePos + 1200));
+        var ip2 = 0;
+        while (ip2 < after.length) {
+          var ipos = after.indexOf('<img', ip2);
+          if (ipos < 0) break;
+          var ie2 = after.indexOf('>', ipos);
+          if (ie2 < 0) break;
+          var src2 = imgSrc(after.slice(ipos, ie2 + 1));
+          if (src2 && isProductImg(src2)) return src2;
+          ip2 = ipos + 1;
         }
       }
       return null;
