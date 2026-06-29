@@ -94,35 +94,104 @@
     return lo.indexOf('.svg') < 0 && lo.indexOf('.gif') < 0;
   }
 
-  // Find each wine's label image by matching the wine name against <img alt="...">
-  // attributes in the page. Bodeboca puts the wine name directly in alt.
-  function findImages(html, items) {
-    // Build alt → src map from all <img> tags (script blocks stripped to avoid
-    // matching names inside JSON strings embedded in <script> content).
+  function normalizeAlt(s) {
+    s = s.toLowerCase().trim();
+    if (s.startsWith('producto: ')) s = s.slice(10);
+    return s;
+  }
+
+  // Build alt→src map from <img> tags in a raw HTML string
+  function buildAltMapFromHTML(html) {
     var stripped = stripScripts(html);
-    var altToSrc = {};
+    var map = {};
     var pos = 0;
     while (pos < stripped.length) {
       var ip = stripped.indexOf('<img', pos);
       if (ip < 0) break;
-      var ie = stripped.indexOf('>', ip);
-      if (ie < 0) break;
+      // Find end of this tag — handle self-closing and multi-line
+      var ie = ip + 4;
+      var inStr = false, strChar = '';
+      while (ie < stripped.length) {
+        var c = stripped[ie];
+        if (inStr) { if (c === strChar) inStr = false; }
+        else if (c === '"' || c === "'") { inStr = true; strChar = c; }
+        else if (c === '>') break;
+        ie++;
+      }
       var tag = stripped.slice(ip, ie + 1);
       pos = ie + 1;
 
       var alt = extractAttr(tag, 'alt');
       if (!alt) continue;
-      var altKey = alt.toLowerCase().trim();
-      // Bodeboca sometimes prefixes alt with "Producto: "
-      if (altKey.startsWith('producto: ')) altKey = altKey.slice(10);
-      if (!altKey || altKey.length < 4) continue;
+      var key = normalizeAlt(alt);
+      if (key.length < 4) continue;
 
       var src = imgSrc(tag);
-      if (src && isProductImg(src) && !altToSrc[altKey]) {
-        altToSrc[altKey] = src;
-      }
+      if (src && isProductImg(src) && !map[key]) map[key] = src;
     }
+    log('HTML img map size:', Object.keys(map).length);
+    return map;
+  }
 
+  // Build alt→src map from JSON-LD Product schemas in the HTML
+  function buildAltMapFromJsonLd(html) {
+    var map = {};
+    var pos = 0;
+    while (pos < html.length) {
+      var s = html.indexOf('<script', pos);
+      if (s < 0) break;
+      var gt = html.indexOf('>', s);
+      if (gt < 0) break;
+      var tag = html.slice(s, gt + 1).toLowerCase();
+      if (tag.indexOf('ld+json') < 0) { pos = gt + 1; continue; }
+      var end = html.indexOf('</script>', gt + 1);
+      if (end < 0) break;
+      var content = html.slice(gt + 1, end).trim();
+      pos = end + 9;
+      try {
+        var data = JSON.parse(content);
+        var nodes = [];
+        if (Array.isArray(data)) nodes = data;
+        else if (data['@graph']) nodes = data['@graph'];
+        else nodes = [data];
+        nodes.forEach(function (node) {
+          if (!node || node['@type'] !== 'Product' || !node.name) return;
+          var img = node.image;
+          if (Array.isArray(img)) img = img[0];
+          if (img && typeof img === 'object') img = img.url || img.contentUrl || '';
+          if (typeof img !== 'string' || !img || !isProductImg(img)) return;
+          var key = normalizeAlt(node.name);
+          if (key.length >= 4 && !map[key]) map[key] = img;
+        });
+      } catch (e) {}
+    }
+    log('JSON-LD img map size:', Object.keys(map).length);
+    return map;
+  }
+
+  // Build alt→src map from the live DOM (only valid on the current Bodeboca page)
+  function buildAltMapFromDOM() {
+    var map = {};
+    var imgs = document.querySelectorAll('img');
+    for (var i = 0; i < imgs.length; i++) {
+      var img = imgs[i];
+      var alt = img.getAttribute('alt') || '';
+      var key = normalizeAlt(alt);
+      if (key.length < 4) continue;
+      var src = img.currentSrc
+        || img.getAttribute('data-lazy-src')
+        || img.getAttribute('data-src')
+        || img.getAttribute('data-original')
+        || img.src || '';
+      if (!src || src.startsWith('data:') || src.length <= 8) continue;
+      if (!src.startsWith('http')) src = 'https://www.bodeboca.com' + src;
+      if (isProductImg(src) && !map[key]) map[key] = src;
+    }
+    log('DOM img map size:', Object.keys(map).length);
+    return map;
+  }
+
+  function matchFromAltMap(altToSrc, items) {
     var found = 0;
     var result = items.map(function (it) {
       var name = (it.item_name || '').toLowerCase().trim();
@@ -131,12 +200,10 @@
       // 1. Exact match
       if (altToSrc[name]) { found++; return altToSrc[name]; }
 
-      // 2. Match ignoring trailing vintage year (e.g. "merlot 2021" vs "merlot 2020")
+      // 2. Strip trailing vintage year from both sides
       var nameNoYear = name.replace(/\s+\d{4}$/, '').trim();
       for (var k in altToSrc) {
-        if (k.replace(/\s+\d{4}$/, '').trim() === nameNoYear) {
-          found++; return altToSrc[k];
-        }
+        if (k.replace(/\s+\d{4}$/, '').trim() === nameNoYear) { found++; return altToSrc[k]; }
       }
 
       // 3. Prefix match on first 25 chars
@@ -145,11 +212,40 @@
         if (k2.slice(0, 25) === pre) { found++; return altToSrc[k2]; }
       }
 
+      // 4. Substring: name contains key or key contains name (min 10 chars)
+      if (name.length >= 10) {
+        for (var k3 in altToSrc) {
+          if (k3.length >= 10 && (name.indexOf(k3) >= 0 || k3.indexOf(name) >= 0)) {
+            found++; return altToSrc[k3];
+          }
+        }
+      }
+
       return null;
     });
 
     log('Imágenes encontradas: ' + found + '/' + items.length);
+    if (found === 0 && items.length > 0) {
+      // Log first few keys to help diagnose mismatches
+      var keys = Object.keys(altToSrc).slice(0, 5);
+      log('Alt map sample:', keys.join(' | '));
+      log('First item_name:', (items[0].item_name || '(none)'));
+    }
     return result;
+  }
+
+  // Find each wine's label image. useDOM=true on the first page (live DOM available).
+  function findImages(html, items, useDOM) {
+    var altToSrc = {};
+    // Merge all sources (later sources don't overwrite existing entries)
+    function merge(src) {
+      for (var k in src) if (!altToSrc[k]) altToSrc[k] = src[k];
+    }
+    if (useDOM) merge(buildAltMapFromDOM());
+    merge(buildAltMapFromJsonLd(html));
+    merge(buildAltMapFromHTML(html));
+    log('Combined img map size:', Object.keys(altToSrc).length);
+    return matchFromAltMap(altToSrc, items);
   }
 
   function getItems(html) {
@@ -233,8 +329,8 @@
     return found;
   }
 
-  function mapItems(html, rawItems) {
-    var images = findImages(html, rawItems);
+  function mapItems(html, rawItems, useDOM) {
+    var images = findImages(html, rawItems, useDOM);
     var withImages = rawItems.filter(Boolean).map(function (it, idx) {
       return { item: it, img: images[idx] || null };
     });
@@ -324,7 +420,8 @@
         return;
       }
       log('Página 1: ' + raw.length + ' items. Primer item:', raw[0]);
-      var wines = mapItems(h1, raw);
+      var wines = mapItems(h1, raw, true /* useDOM */);
+
       return sendBatch(wines, 1).then(function () {
         show('Página 1 — ' + totalImported + ' guardados…');
         return fetchNext(2, 0).then(function () {
