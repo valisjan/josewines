@@ -1,10 +1,14 @@
-import type { Handler } from '@netlify/functions'
 import { createClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+interface Env {
+  SUPABASE_URL: string
+  SUPABASE_SERVICE_ROLE_KEY: string
+}
+
+interface Ctx {
+  request: Request
+  env: Env
+}
 
 interface ParsedWine {
   name: string
@@ -21,7 +25,6 @@ interface ParsedWine {
 function parseBodbocaEmail(body: string, subject: string): ParsedWine[] {
   const wines: ParsedWine[] = []
 
-  // Extract order date
   const dateMatch = body.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/) ??
                     body.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/)
   const purchaseDate = dateMatch
@@ -31,13 +34,10 @@ function parseBodbocaEmail(body: string, subject: string): ParsedWine[] {
     ).toISOString().split('T')[0]
     : new Date().toISOString().split('T')[0]
 
-  // Extract order ID
   const orderMatch = body.match(/[Pp]edido[:\s#]*([A-Z0-9\-]+)/) ??
                      body.match(/[Oo]rder[:\s#]*([A-Z0-9\-]+)/)
   const orderId = orderMatch?.[1] ?? null
 
-  // Parse wine lines — Bodeboca format:
-  // "Nombre del Vino (Añada) x Unidades ... precio €"
   const winePattern = /([A-ZÁÉÍÓÚÑ][^\n]{5,60}?)\s+(\d{4})\s+x\s*(\d+)\s+.*?(\d+[.,]\d{2})\s*€/gi
   let match
   while ((match = winePattern.exec(body)) !== null) {
@@ -56,7 +56,6 @@ function parseBodbocaEmail(body: string, subject: string): ParsedWine[] {
     })
   }
 
-  // Fallback: simpler pattern for wines without vintage in the same line
   if (wines.length === 0) {
     const simplePattern = /([A-ZÁÉÍÓÚÑ][^\n]{5,60}?)\s+x\s*(\d+)\s+.*?(\d+[.,]\d{2})\s*€/gi
     while ((match = simplePattern.exec(body)) !== null) {
@@ -81,33 +80,22 @@ function parseBodbocaEmail(body: string, subject: string): ParsedWine[] {
 }
 
 function extractWinery(wineName: string): string {
-  // Common pattern: "Bodega NombreVino" or "NombreVino de Bodega"
   const prefixMatch = wineName.match(/^(Bodegas?\s+\w+)/i)
   if (prefixMatch) return prefixMatch[1]
-  // Return first word(s) as a best-guess winery name
   const words = wineName.split(/\s+/)
   return words.slice(0, Math.min(2, words.length)).join(' ')
 }
 
-export const handler: Handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' }
-  }
-
-  // Verify Mailgun webhook signature (basic check)
-  const mailgunSigningKey = process.env.MAILGUN_WEBHOOK_SIGNING_KEY
-  if (mailgunSigningKey) {
-    // Full HMAC verification would go here in production
-    // For now we rely on the secret URL path
-  }
-
+export async function onRequestPost({ request, env }: Ctx): Promise<Response> {
   try {
-    const params = new URLSearchParams(event.body ?? '')
+    const bodyText = await request.text()
+    const params = new URLSearchParams(bodyText)
     const subject = params.get('subject') ?? ''
     const bodyPlain = params.get('body-plain') ?? ''
     const recipient = params.get('recipient') ?? ''
 
-    // Find the user by the email address (recipient is user-specific)
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
+
     const emailPrefix = recipient.split('@')[0]
     const { data: profile } = await supabase
       .from('user_email_aliases')
@@ -116,13 +104,13 @@ export const handler: Handler = async (event) => {
       .single()
 
     if (!profile) {
-      return { statusCode: 404, body: 'User not found' }
+      return new Response('User not found', { status: 404 })
     }
 
     const parsed = parseBodbocaEmail(bodyPlain, subject)
 
     if (parsed.length === 0) {
-      return { statusCode: 200, body: JSON.stringify({ message: 'No wines found in email', parsed: 0 }) }
+      return new Response(JSON.stringify({ message: 'No wines found in email', parsed: 0 }), { status: 200 })
     }
 
     const rows = parsed.map(w => ({ ...w, user_id: profile.user_id }))
@@ -130,12 +118,9 @@ export const handler: Handler = async (event) => {
 
     if (error) throw error
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ message: 'OK', parsed: parsed.length }),
-    }
+    return new Response(JSON.stringify({ message: 'OK', parsed: parsed.length }), { status: 200 })
   } catch (err) {
     console.error('parse-email error:', err)
-    return { statusCode: 500, body: 'Internal error' }
+    return new Response('Internal error', { status: 500 })
   }
 }

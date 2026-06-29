@@ -1,7 +1,7 @@
 // JoseWines Bodeboca importer
 (function () {
   var TOKEN = window.__JW_TOKEN;
-  var API = 'https://josewines.netlify.app/.netlify/functions/import-bodeboca';
+  var API = 'https://josewines.pages.dev/api/import-bodeboca';
   var BASE = 'https://www.bodeboca.com/mi-bodega?sort=created-desc&page=';
   var seenIds = {};
   var totalImported = 0;
@@ -427,7 +427,7 @@
         return fetchNext(2, 0).then(function () {
           show('✅ ' + totalImported + ' vinos importados'
             + (totalSkipped > 0 ? ', ' + totalSkipped + ' ya existían' : '')
-            + '.<br><a href="https://josewines.netlify.app/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
+            + '.<br><a href="https://josewines.pages.dev/pendientes" style="color:#f4a8a8">Ir a Pendientes →</a>', true);
         });
       });
     })
