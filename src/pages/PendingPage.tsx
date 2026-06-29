@@ -124,6 +124,13 @@ export default function PendingPage() {
                         : 'border-wine-600 bg-transparent'
                     )}
                   />
+                  {/* Label thumbnail */}
+                  <div className="w-10 h-14 rounded-lg bg-wine-800/60 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {wine.label_image_url
+                      ? <img src={wine.label_image_url} alt={wine.name} className="w-full h-full object-cover" />
+                      : <span className="text-wine-600 text-lg">🍷</span>
+                    }
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-semibold text-sm">{wine.name}</p>
                     <p className="text-wine-400 text-xs mt-0.5">{wine.winery}</p>
