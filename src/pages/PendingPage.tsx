@@ -59,28 +59,51 @@ export default function PendingPage() {
     if (!toAdd.length || !user) return
     setConfirming(true)
 
-    const wines = toAdd.map(w => ({
-      user_id: user.id,
-      name: w.name,
-      winery: w.winery,
-      region: w.region,
-      grape_variety: w.grape_variety,
-      vintage_year: w.vintage_year,
-      purchase_date: w.purchase_date,
-      price_per_bottle: w.price_per_bottle,
-      units_purchased: w.units_purchased,
-      units_remaining: asHistory ? 0 : w.units_purchased,
-      personal_score: w.personal_score ?? null,
-      notes: w.notes ?? null,
-      source_order_id: w.source_order_id,
-      label_image_url: w.label_image_url ?? null,
-    }))
+    try {
+      const BATCH = 100
 
-    await supabase.from('wines').insert(wines)
-    await supabase.from('pending_wines').delete().in('id', toAdd.map(w => w.id))
+      // Avoid duplicates: skip source_order_ids already in wines table
+      const sourceIds = toAdd.map(w => w.source_order_id).filter(Boolean) as string[]
+      const existingIds = new Set<string>()
+      for (let i = 0; i < sourceIds.length; i += BATCH) {
+        const { data } = await supabase
+          .from('wines').select('source_order_id').eq('user_id', user.id)
+          .in('source_order_id', sourceIds.slice(i, i + BATCH))
+        data?.forEach(w => { if (w.source_order_id) existingIds.add(w.source_order_id) })
+      }
 
-    setConfirming(false)
-    fetchAll()
+      const toInsert = toAdd
+        .filter(w => !w.source_order_id || !existingIds.has(w.source_order_id))
+        .map(w => ({
+          user_id: user.id,
+          name: w.name,
+          winery: w.winery,
+          region: w.region,
+          grape_variety: w.grape_variety,
+          vintage_year: w.vintage_year,
+          purchase_date: w.purchase_date,
+          price_per_bottle: w.price_per_bottle,
+          units_purchased: w.units_purchased,
+          units_remaining: asHistory ? 0 : w.units_purchased,
+          personal_score: w.personal_score ?? null,
+          notes: w.notes ?? null,
+          source_order_id: w.source_order_id,
+          label_image_url: w.label_image_url ?? null,
+        }))
+
+      // Insert in batches
+      for (let i = 0; i < toInsert.length; i += BATCH)
+        await supabase.from('wines').insert(toInsert.slice(i, i + BATCH))
+
+      // Delete from pending in batches
+      const ids = toAdd.map(w => w.id)
+      for (let i = 0; i < ids.length; i += BATCH)
+        await supabase.from('pending_wines').delete().in('id', ids.slice(i, i + BATCH))
+
+    } finally {
+      setConfirming(false)
+      fetchAll()
+    }
   }
 
   const matchesSearch = (w: PendingWine) => {
