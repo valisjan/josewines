@@ -103,7 +103,7 @@ export default function CellarPage() {
       <div className="flex gap-1 mb-4 p-1 bg-wine-900/40 rounded-xl border border-wine-800/40">
         {([
           { key: 'present', label: `En bodega (${presentCount})` },
-          { key: 'absent',  label: `Agotados (${absentCount})` },
+          { key: 'absent',  label: `Histórico (${absentCount})` },
           { key: 'all',     label: 'Todos' },
         ] as { key: PresenceFilter; label: string }[]).map(({ key, label }) => (
           <button
@@ -161,7 +161,7 @@ export default function CellarPage() {
           {search
             ? 'Sin resultados para esa búsqueda.'
             : presence === 'absent'
-            ? 'No tienes vinos agotados.'
+            ? 'No hay vinos en el histórico todavía.'
             : 'Tu bodega está vacía. ¡Añade tu primer vino!'}
         </div>
       ) : (

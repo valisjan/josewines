@@ -54,7 +54,7 @@ export default function PendingPage() {
     setPending(prev => prev.filter(w => w.id !== id))
   }
 
-  const confirmSelected = async () => {
+  const confirmSelected = async (asHistory = false) => {
     const toAdd = pending.filter(w => w.selected && matchesSearch(w))
     if (!toAdd.length || !user) return
     setConfirming(true)
@@ -69,7 +69,7 @@ export default function PendingPage() {
       purchase_date: w.purchase_date,
       price_per_bottle: w.price_per_bottle,
       units_purchased: w.units_purchased,
-      units_remaining: w.units_purchased,
+      units_remaining: asHistory ? 0 : w.units_purchased,
       personal_score: w.personal_score ?? null,
       notes: w.notes ?? null,
       source_order_id: w.source_order_id,
@@ -247,21 +247,26 @@ export default function PendingPage() {
             })}
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setPending(prev => prev.map(w => ({ ...w, selected: true })))}
-              className="flex-1 py-3 rounded-xl border border-wine-700 text-wine-300 text-sm font-medium hover:bg-wine-900/50 transition-colors"
+              className="w-full py-2.5 rounded-xl border border-wine-700 text-wine-300 text-sm font-medium hover:bg-wine-900/50 transition-colors"
             >
-              Seleccionar todos
+              Seleccionar todos ({filtered.length})
             </button>
             <button
-              onClick={confirmSelected}
+              onClick={() => confirmSelected(true)}
+              disabled={selectedCount === 0 || confirming}
+              className="flex-1 py-3 rounded-xl bg-wine-900 hover:bg-wine-800 border border-wine-700 text-wine-300 text-sm font-semibold disabled:opacity-40 transition-colors"
+            >
+              {confirming ? '...' : `📜 Al histórico (${selectedCount})`}
+            </button>
+            <button
+              onClick={() => confirmSelected(false)}
               disabled={selectedCount === 0 || confirming}
               className="flex-1 py-3 rounded-xl bg-wine-700 hover:bg-wine-600 text-white text-sm font-semibold disabled:opacity-40 transition-colors"
             >
-              {confirming
-                ? 'Añadiendo...'
-                : `Añadir ${selectedCount} ${selectedCount === 1 ? 'vino' : 'vinos'}`}
+              {confirming ? 'Añadiendo...' : `🍾 A la bodega (${selectedCount})`}
             </button>
           </div>
         </>
