@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, Trash2, ChevronDown, ChevronUp, Download, Search } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { proxyImg } from '../lib/proxyImg'
 import { useAuth } from '../context/AuthContext'
 import type { PendingWine } from '../types/wine'
 import ScoreInput from '../components/ScoreInput'
@@ -60,15 +61,17 @@ export default function PendingPage() {
     setConfirming(true)
 
     try {
-      const BATCH = 100
+      // POST/body operations can use larger batches; URL-based (.in filter) must stay small
+      const BATCH_BODY = 100
+      const BATCH_URL = 20
 
       // Avoid duplicates: skip source_order_ids already in wines table
       const sourceIds = toAdd.map(w => w.source_order_id).filter(Boolean) as string[]
       const existingIds = new Set<string>()
-      for (let i = 0; i < sourceIds.length; i += BATCH) {
+      for (let i = 0; i < sourceIds.length; i += BATCH_URL) {
         const { data } = await supabase
           .from('wines').select('source_order_id').eq('user_id', user.id)
-          .in('source_order_id', sourceIds.slice(i, i + BATCH))
+          .in('source_order_id', sourceIds.slice(i, i + BATCH_URL))
         data?.forEach(w => { if (w.source_order_id) existingIds.add(w.source_order_id) })
       }
 
@@ -91,14 +94,14 @@ export default function PendingPage() {
           label_image_url: w.label_image_url ?? null,
         }))
 
-      // Insert in batches
-      for (let i = 0; i < toInsert.length; i += BATCH)
-        await supabase.from('wines').insert(toInsert.slice(i, i + BATCH))
+      // Insert in batches (POST body — no URL limit)
+      for (let i = 0; i < toInsert.length; i += BATCH_BODY)
+        await supabase.from('wines').insert(toInsert.slice(i, i + BATCH_BODY))
 
-      // Delete from pending in batches
+      // Delete from pending in small batches (.in() uses URL params — strict limit)
       const ids = toAdd.map(w => w.id)
-      for (let i = 0; i < ids.length; i += BATCH)
-        await supabase.from('pending_wines').delete().in('id', ids.slice(i, i + BATCH))
+      for (let i = 0; i < ids.length; i += BATCH_URL)
+        await supabase.from('pending_wines').delete().eq('user_id', user.id).in('id', ids.slice(i, i + BATCH_URL))
 
     } finally {
       setConfirming(false)
@@ -194,8 +197,8 @@ export default function PendingPage() {
 
                     {/* Label thumbnail */}
                     <div className="w-10 h-14 rounded-lg bg-wine-800/60 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {wine.label_image_url
-                        ? <img src={wine.label_image_url} alt={wine.name} className="w-full h-full object-cover" />
+                      {proxyImg(wine.label_image_url)
+                        ? <img src={proxyImg(wine.label_image_url)!} alt={wine.name} className="w-full h-full object-cover" />
                         : <span className="text-wine-600 text-lg">🍷</span>
                       }
                     </div>

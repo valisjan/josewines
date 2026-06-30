@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Wine, Minus, Plus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { proxyImg } from '../lib/proxyImg'
 import type { Wine as WineType } from '../types/wine'
 import { getScoreLabel } from '../types/wine'
 import clsx from 'clsx'
@@ -26,8 +27,8 @@ export default function WineCard({ wine, onUpdated }: Props) {
     >
       {/* Label thumbnail */}
       <div className="w-12 h-16 rounded-lg bg-wine-800/60 flex items-center justify-center flex-shrink-0 overflow-hidden">
-        {wine.label_image_url ? (
-          <img src={wine.label_image_url} alt={wine.name} className="w-full h-full object-cover" />
+        {proxyImg(wine.label_image_url) ? (
+          <img src={proxyImg(wine.label_image_url)!} alt={wine.name} className="w-full h-full object-cover" />
         ) : (
           <Wine className="w-5 h-5 text-wine-600" />
         )}

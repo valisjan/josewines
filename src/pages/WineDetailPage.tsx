@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Edit3, Trash2, GlassWater, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { proxyImg } from '../lib/proxyImg'
 import type { Wine, Consumption } from '../types/wine'
 import { getScoreLabel } from '../types/wine'
 import ScoreInput from '../components/ScoreInput'
@@ -120,7 +121,7 @@ export default function WineDetailPage() {
               />
             ) : wine.label_image_url ? (
               <img
-                src={wine.label_image_url}
+                src={proxyImg(wine.label_image_url)!}
                 alt={wine.name}
                 className="w-20 h-28 rounded-xl object-cover border border-wine-800/40"
               />
