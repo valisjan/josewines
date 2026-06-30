@@ -170,6 +170,29 @@ export default function PendingPage() {
         </div>
       ) : (
         <>
+          <div className="flex gap-2 flex-wrap mb-4">
+            <button
+              onClick={() => setPending(prev => prev.map(w => ({ ...w, selected: true })))}
+              className="w-full py-2.5 rounded-xl border border-wine-700 text-wine-300 text-sm font-medium hover:bg-wine-900/50 transition-colors"
+            >
+              Seleccionar todos ({filtered.length})
+            </button>
+            <button
+              onClick={() => confirmSelected(true)}
+              disabled={selectedCount === 0 || confirming}
+              className="flex-1 py-3 rounded-xl bg-wine-900 hover:bg-wine-800 border border-wine-700 text-wine-300 text-sm font-semibold disabled:opacity-40 transition-colors"
+            >
+              {confirming ? '...' : `📜 Al histórico (${selectedCount})`}
+            </button>
+            <button
+              onClick={() => confirmSelected(false)}
+              disabled={selectedCount === 0 || confirming}
+              className="flex-1 py-3 rounded-xl bg-wine-700 hover:bg-wine-600 text-white text-sm font-semibold disabled:opacity-40 transition-colors"
+            >
+              {confirming ? 'Añadiendo...' : `🍾 A la bodega (${selectedCount})`}
+            </button>
+          </div>
+
           <div className="space-y-3 mb-6">
             {filtered.map(wine => {
               const units = cellarUnits(wine.name)
@@ -273,28 +296,6 @@ export default function PendingPage() {
             })}
           </div>
 
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => setPending(prev => prev.map(w => ({ ...w, selected: true })))}
-              className="w-full py-2.5 rounded-xl border border-wine-700 text-wine-300 text-sm font-medium hover:bg-wine-900/50 transition-colors"
-            >
-              Seleccionar todos ({filtered.length})
-            </button>
-            <button
-              onClick={() => confirmSelected(true)}
-              disabled={selectedCount === 0 || confirming}
-              className="flex-1 py-3 rounded-xl bg-wine-900 hover:bg-wine-800 border border-wine-700 text-wine-300 text-sm font-semibold disabled:opacity-40 transition-colors"
-            >
-              {confirming ? '...' : `📜 Al histórico (${selectedCount})`}
-            </button>
-            <button
-              onClick={() => confirmSelected(false)}
-              disabled={selectedCount === 0 || confirming}
-              className="flex-1 py-3 rounded-xl bg-wine-700 hover:bg-wine-600 text-white text-sm font-semibold disabled:opacity-40 transition-colors"
-            >
-              {confirming ? 'Añadiendo...' : `🍾 A la bodega (${selectedCount})`}
-            </button>
-          </div>
         </>
       )}
     </div>
