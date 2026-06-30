@@ -47,10 +47,15 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
   const suggestionsRef = useRef<HTMLDivElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const skipSearch = useRef(false)
 
   const set = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
 
   useEffect(() => {
+    if (skipSearch.current) {
+      skipSearch.current = false
+      return
+    }
     const q = form.name.trim()
     if (q.length < 2) {
       setSuggestions([])
@@ -86,6 +91,7 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
   }
 
   function applySuggestion(s: WineSuggestion) {
+    skipSearch.current = true
     setForm(prev => ({
       ...prev,
       name: s.name,
@@ -99,6 +105,7 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
     setSuggestions([])
     setShowSuggestions(false)
     setActiveSuggestion(-1)
+    nameInputRef.current?.focus()
   }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
@@ -180,7 +187,7 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
                     <button
                       key={s.id}
                       type="button"
-                      onMouseDown={() => applySuggestion(s)}
+                      onMouseDown={e => { e.preventDefault(); applySuggestion(s) }}
                       className={`w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors ${
                         i === activeSuggestion ? 'bg-wine-700/60' : 'hover:bg-wine-800/60'
                       }`}
