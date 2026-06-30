@@ -175,7 +175,11 @@ export default function CellarPage() {
       {showAddModal && (
         <AddWineModal
           onClose={() => setShowAddModal(false)}
-          onSaved={() => { setShowAddModal(false); fetchWines() }}
+          onSaved={wine => {
+            setShowAddModal(false)
+            setWines(prev => [wine, ...prev])
+            fetchWines()
+          }}
         />
       )}
     </div>

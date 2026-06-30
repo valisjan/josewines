@@ -50,6 +50,9 @@ export default function Layout() {
             <LogOut className="w-5 h-5" />
             Cerrar sesión
           </button>
+          <p className="mt-3 px-3 text-[10px] text-wine-700 tabular-nums">
+            Build {new Date(__BUILD_TIME__).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+          </p>
         </div>
       </div>
 

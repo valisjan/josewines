@@ -1,13 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import type { Wine } from '../types/wine'
 import ScoreInput from './ScoreInput'
 import PhotoUpload from './PhotoUpload'
 
 interface Props {
   onClose: () => void
-  onSaved: () => void
+  onSaved: (wine: Wine) => void
+}
+
+interface WineSuggestion {
+  id: string
+  name: string
+  winery: string
+  region: string | null
+  grape_variety: string | null
+  optimal_drink_from: number | null
+  optimal_drink_until: number | null
+  label_image_url: string | null
 }
 
 export default function AddWineModal({ onClose, onSaved }: Props) {
@@ -29,15 +41,89 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
     label_image_url: null as string | null,
   })
 
+  const [suggestions, setSuggestions] = useState<WineSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [activeSuggestion, setActiveSuggestion] = useState(-1)
+  const suggestionsRef = useRef<HTMLDivElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const set = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    const q = form.name.trim()
+    if (q.length < 2) {
+      setSuggestions([])
+      setShowSuggestions(false)
+      return
+    }
+
+    if (searchTimeout.current) clearTimeout(searchTimeout.current)
+    searchTimeout.current = setTimeout(async () => {
+      const { data } = await supabase
+        .from('wines')
+        .select('id, name, winery, region, grape_variety, optimal_drink_from, optimal_drink_until, label_image_url')
+        .ilike('name', `%${q}%`)
+        .limit(6)
+
+      const unique = dedupeByName(data ?? [])
+      setSuggestions(unique)
+      setShowSuggestions(unique.length > 0)
+      setActiveSuggestion(-1)
+    }, 220)
+
+    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current) }
+  }, [form.name])
+
+  function dedupeByName(wines: WineSuggestion[]): WineSuggestion[] {
+    const seen = new Set<string>()
+    return wines.filter(w => {
+      const key = w.name.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+
+  function applySuggestion(s: WineSuggestion) {
+    setForm(prev => ({
+      ...prev,
+      name: s.name,
+      winery: s.winery,
+      region: s.region ?? prev.region,
+      grape_variety: s.grape_variety ?? prev.grape_variety,
+      optimal_drink_from: s.optimal_drink_from ? String(s.optimal_drink_from) : prev.optimal_drink_from,
+      optimal_drink_until: s.optimal_drink_until ? String(s.optimal_drink_until) : prev.optimal_drink_until,
+      label_image_url: s.label_image_url ?? prev.label_image_url,
+    }))
+    setSuggestions([])
+    setShowSuggestions(false)
+    setActiveSuggestion(-1)
+  }
+
+  function handleNameKeyDown(e: React.KeyboardEvent) {
+    if (!showSuggestions) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveSuggestion(i => Math.min(i + 1, suggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveSuggestion(i => Math.max(i - 1, -1))
+    } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+      e.preventDefault()
+      applySuggestion(suggestions[activeSuggestion])
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!user) return
     setSaving(true)
 
     const units = parseInt(form.units_purchased) || 1
-    await supabase.from('wines').insert({
+    const { data } = await supabase.from('wines').insert({
       user_id: user.id,
       name: form.name.trim(),
       winery: form.winery.trim(),
@@ -53,10 +139,10 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
       optimal_drink_from: form.optimal_drink_from ? parseInt(form.optimal_drink_from) : null,
       optimal_drink_until: form.optimal_drink_until ? parseInt(form.optimal_drink_until) : null,
       label_image_url: form.label_image_url,
-    })
+    }).select().single()
 
     setSaving(false)
-    onSaved()
+    if (data) onSaved(data as Wine)
   }
 
   return (
@@ -72,13 +158,51 @@ export default function AddWineModal({ onClose, onSaved }: Props) {
 
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">
           <Field label="Nombre del vino *">
-            <input
-              required
-              value={form.name}
-              onChange={e => set('name', e.target.value)}
-              placeholder="Vega Sicilia Único 2015"
-              className={inputCls}
-            />
+            <div className="relative">
+              <input
+                ref={nameInputRef}
+                required
+                value={form.name}
+                onChange={e => set('name', e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                placeholder="Vega Sicilia Único 2015"
+                className={inputCls}
+                autoComplete="off"
+              />
+              {showSuggestions && (
+                <div
+                  ref={suggestionsRef}
+                  className="absolute left-0 right-0 top-full mt-1 z-10 bg-wine-900 border border-wine-700/60 rounded-xl shadow-xl overflow-hidden"
+                >
+                  {suggestions.map((s, i) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onMouseDown={() => applySuggestion(s)}
+                      className={`w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors ${
+                        i === activeSuggestion ? 'bg-wine-700/60' : 'hover:bg-wine-800/60'
+                      }`}
+                    >
+                      {s.label_image_url && (
+                        <img
+                          src={s.label_image_url}
+                          alt=""
+                          className="w-8 h-10 object-cover rounded flex-shrink-0 opacity-90"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-sm text-white font-medium truncate">{s.name}</div>
+                        <div className="text-xs text-wine-400 truncate">
+                          {s.winery}{s.region ? ` · ${s.region}` : ''}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </Field>
 
           <Field label="Bodega *">
